@@ -1,0 +1,255 @@
+---
+title: 'Analyze Risk Profile'
+api: 'POST /api/investment/:accountId/analyze-profile'
+---
+
+Analyzes user responses to generate a personalized investment risk profile using AI. The endpoint evaluates financial metrics, risk tolerance, investment experience, and time horizon to recommend an investment strategy.
+
+<Info>
+This endpoint uses AI and counts as 1 AI request toward your rate limit.
+</Info>
+
+## Authentication
+
+Requires a valid Bearer token in the Authorization header.
+
+## Path Parameters
+
+<ParamField path="accountId" type="string" required>
+  The unique identifier of the account to analyze
+</ParamField>
+
+## Request Body
+
+<ParamField body="age" type="integer" required>
+  User's age (minimum 18, maximum 99)
+</ParamField>
+
+<ParamField body="monthlyIncome" type="integer" required>
+  Monthly income in euros (must be positive, maximum 999,999)
+</ParamField>
+
+<ParamField body="jobStability" type="string" required>
+  Employment stability level
+  
+  Options: `high`, `medium`, `low`
+</ParamField>
+
+<ParamField body="hasEmergencyFund" type="string" required>
+  Whether user has an emergency fund established
+  
+  Options: `yes`, `partial`, `no`
+</ParamField>
+
+<ParamField body="horizonYears" type="string" required>
+  Investment time horizon
+  
+  Options: `<3`, `3-10`, `>10`
+</ParamField>
+
+<ParamField body="reactionToDrop" type="string" required>
+  User's typical reaction to a market downturn
+  
+  Options: `sell`, `hold`, `buy_more`
+</ParamField>
+
+<ParamField body="experienceLevel" type="string" required>
+  Investment experience level
+  
+  Options: `none`, `basic`, `intermediate`, `advanced`
+</ParamField>
+
+<ParamField body="financialMetrics" type="object">
+  Optional calculated financial metrics for enhanced analysis
+  
+  <Expandable title="financialMetrics properties">
+    <ParamField body="avgMonthlyIncome" type="number" required>
+      Average monthly income (minimum 0)
+    </ParamField>
+    
+    <ParamField body="avgMonthlyExpenses" type="number" required>
+      Average monthly expenses (minimum 0)
+    </ParamField>
+    
+    <ParamField body="savingsCapacity" type="number" required>
+      Monthly savings capacity
+    </ParamField>
+    
+    <ParamField body="savingsRate" type="number" required>
+      Savings rate as a percentage
+    </ParamField>
+    
+    <ParamField body="historicalMonths" type="integer" required>
+      Number of historical months analyzed (minimum 0)
+    </ParamField>
+    
+    <ParamField body="trend" type="string" required>
+      Financial trend direction
+      
+      Options: `improving`, `stable`, `declining`
+    </ParamField>
+    
+    <ParamField body="deficitMonths" type="integer" required>
+      Number of months with deficit (minimum 0)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  The AI-generated profile assessment results
+  
+  <Expandable title="data properties">
+    <ResponseField name="recommendedProfile" type="string">
+      Recommended investment profile based on analysis
+      
+      Values: `conservative`, `balanced`, `dynamic`
+    </ResponseField>
+    
+    <ResponseField name="confidence" type="number">
+      AI confidence score for the recommendation (0-1)
+    </ResponseField>
+    
+    <ResponseField name="reasoning" type="string">
+      Detailed explanation of why this profile was recommended
+    </ResponseField>
+    
+    <ResponseField name="investmentPercentage" type="number">
+      Recommended percentage of savings to allocate to investments
+    </ResponseField>
+    
+    <ResponseField name="monthlyInvestable" type="number">
+      Suggested monthly investment amount in euros
+    </ResponseField>
+    
+    <ResponseField name="liquidityReserve" type="number">
+      Recommended emergency fund amount in euros
+    </ResponseField>
+    
+    <ResponseField name="historicalInsights" type="object">
+      Analysis of historical financial data
+      
+      <Expandable title="historicalInsights properties">
+        <ResponseField name="monthsAnalyzed" type="number">
+          Number of months included in the analysis
+        </ResponseField>
+        
+        <ResponseField name="trend" type="string">
+          Overall financial trend description
+        </ResponseField>
+        
+        <ResponseField name="bestMonth" type="string">
+          Description of the best performing month
+        </ResponseField>
+        
+        <ResponseField name="worstMonth" type="string">
+          Description of the worst performing month
+        </ResponseField>
+        
+        <ResponseField name="savingsConsistency" type="string">
+          Assessment of savings consistency over time
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="warnings" type="array">
+      Array of cautionary notes or important considerations
+    </ResponseField>
+    
+    <ResponseField name="marketContext" type="string">
+      Current market conditions context for the recommendation
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X POST 'https://api.example.com/api/investment/acc_123/analyze-profile' \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "age": 32,
+    "monthlyIncome": 3500,
+    "jobStability": "high",
+    "hasEmergencyFund": "partial",
+    "horizonYears": "3-10",
+    "reactionToDrop": "hold",
+    "experienceLevel": "basic",
+    "financialMetrics": {
+      "avgMonthlyIncome": 3500,
+      "avgMonthlyExpenses": 2200,
+      "savingsCapacity": 1300,
+      "savingsRate": 37.14,
+      "historicalMonths": 12,
+      "trend": "stable",
+      "deficitMonths": 1
+    }
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "recommendedProfile": "balanced",
+    "confidence": 0.85,
+    "reasoning": "Based on your stable job, medium-term horizon, and willingness to hold during downturns, a balanced portfolio suits your profile. Your partial emergency fund should be completed before aggressive investing.",
+    "investmentPercentage": 25,
+    "monthlyInvestable": 325,
+    "liquidityReserve": 6600,
+    "historicalInsights": {
+      "monthsAnalyzed": 12,
+      "trend": "Stable savings pattern with consistent positive flow",
+      "bestMonth": "Month 8 with 1,800€ saved",
+      "worstMonth": "Month 3 with -150€ deficit",
+      "savingsConsistency": "High - 11 out of 12 months positive"
+    },
+    "warnings": [
+      "Complete your emergency fund to 3 months of expenses before increasing investment allocation",
+      "Start with lower-risk investments given your basic experience level"
+    ],
+    "marketContext": "Current market volatility suggests starting with index funds and gradual position building"
+  }
+}
+```
+
+## AI Provider Integration
+
+This endpoint integrates with the configured AI provider (OpenAI, Anthropic, or Google) to analyze the user's responses. The AI evaluates:
+
+- Risk tolerance based on behavioral responses
+- Financial capacity from income and metrics
+- Time horizon appropriateness
+- Experience level considerations
+- Current market conditions
+
+The profile is saved to the database and used for future recommendations.
+
+## Error Responses
+
+<ResponseField name="error" type="object">
+  <Expandable title="Error response structure">
+    <ResponseField name="success" type="boolean">
+      Always `false` for errors
+    </ResponseField>
+    
+    <ResponseField name="message" type="string">
+      Human-readable error message
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Common Errors
+
+- `400` - Invalid input data (validation failed)
+- `401` - Unauthorized (missing or invalid token)
+- `403` - Forbidden (no access to this account)
+- `503` - AI service unavailable

@@ -1,0 +1,425 @@
+---
+title: End-to-End Encryption
+description: Comprehensive guide to Home Account's envelope encryption model using AES-256-GCM and Argon2id
+---
+
+## Overview
+
+Home Account implements **end-to-end encryption (E2E)** to ensure your financial data remains private, even if the server is compromised. The server stores only encrypted blobs and cannot read your transactions, amounts, or category names.
+
+<Note>
+**Why E2E?** Your financial data is yours, not ours. Even if someone hacks the server, they get encrypted blobs, not your transactions.
+</Note>
+
+## Envelope Encryption Model
+
+Home Account uses a three-tier envelope encryption architecture:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      E2E ENCRYPTION MODEL                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   ┌─────────────────┐                                           │
+│   │   User Password │  <- You type this on login                │
+│   └────────┬────────┘                                           │
+│            │ Argon2id                                           │
+│            v                                                    │
+│   ┌─────────────────┐                                           │
+│   │   User Key (UK) │  <- Never leaves your browser             │
+│   └────────┬────────┘                                           │
+│            │ Decrypts                                           │
+│            v                                                    │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │              account_keys table (database)              │   │
+│   │  account_id | user_id | encrypted_account_key           │   │
+│   │  acc-001    | user-A  | [UK_A(AK) - encrypted blob]    │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│            │                                                    │
+│            v                                                    │
+│   ┌─────────────────┐                                           │
+│   │ Account Key (AK)│  <- Shared key for all account members   │
+│   └────────┬────────┘                                           │
+│            │ Encrypts/Decrypts                                  │
+│            v                                                    │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │         ENCRYPTED DATA (AES-256-GCM)                    │   │
+│   │  transactions.description_encrypted                     │   │
+│   │  transactions.amount_encrypted                          │   │
+│   │  categories.name_encrypted                              │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Three-Tier Architecture
+
+<Steps>
+  <Step title="User Key (UK)">
+    Derived from your password using **Argon2id**. Never leaves your browser or is sent to the server. This key decrypts your Account Keys.
+  </Step>
+  
+  <Step title="Account Key (AK)">
+    A random **256-bit AES key** generated for each account. Encrypted with your User Key and stored in the `account_keys` table. Shared among all members of an account.
+  </Step>
+  
+  <Step title="Data Encryption">
+    All sensitive data (transactions, amounts, categories) is encrypted with the Account Key using **AES-256-GCM** before being sent to the server.
+  </Step>
+</Steps>
+
+## Cryptographic Specifications
+
+### AES-256-GCM Encryption
+
+All data encryption uses **AES-256-GCM** (Galois/Counter Mode), which provides:
+- **256-bit key strength**
+- **Authenticated encryption** (integrity + confidentiality)
+- **96-bit random IV** (initialization vector) per encryption
+- **128-bit authentication tag** included in ciphertext
+
+```typescript
+// frontend/lib/crypto.ts
+
+const AES_KEY_LENGTH = 256
+const IV_LENGTH = 12 // 96 bits for GCM
+
+export async function encrypt(plaintext: string, accountKey: CryptoKey): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH))
+  const data = utf8ToBytes(plaintext)
+
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    accountKey,
+    toArrayBuffer(data)
+  )
+
+  // Combine iv + encrypted (GCM includes auth tag)
+  const combined = new Uint8Array(iv.length + encrypted.byteLength)
+  combined.set(iv)
+  combined.set(new Uint8Array(encrypted), iv.length)
+
+  return bytesToBase64(combined)
+}
+```
+
+### Argon2id Key Derivation
+
+**Argon2id** (hybrid mode) derives the User Key from your password, providing resistance against both side-channel and GPU attacks.
+
+#### Parameters (OWASP Recommended)
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `t` (iterations) | 3 | Time cost |
+| `m` (memory) | 65536 | 64 MB memory |
+| `p` (parallelism) | 4 | 4 threads |
+| `dkLen` | 32 | 256-bit output |
+
+```typescript
+// frontend/lib/crypto.ts
+
+const ARGON2_OPTIONS = {
+  t: 3,        // iterations
+  m: 65536,    // 64 MB memory
+  p: 4,        // parallelism
+}
+
+export async function deriveUserKey(password: string, saltHex: string): Promise<CryptoKey> {
+  const salt = hexToBytes(saltHex)
+  const passwordBytes = utf8ToBytes(password)
+
+  // Derive 256-bit key using Argon2id
+  const derivedBytes = argon2id(passwordBytes, salt, {
+    ...ARGON2_OPTIONS,
+    dkLen: 32, // 256 bits
+  })
+
+  // Import as CryptoKey for Web Crypto API
+  return crypto.subtle.importKey(
+    'raw',
+    toArrayBuffer(derivedBytes),
+    { name: 'AES-GCM', length: AES_KEY_LENGTH },
+    false, // not extractable - security!
+    ['encrypt', 'decrypt']
+  )
+}
+```
+
+<Info>
+**Why Argon2id?** It's the winner of the Password Hashing Competition and recommended by OWASP. It combines Argon2d's resistance to GPU attacks with Argon2i's resistance to side-channel attacks.
+</Info>
+
+## What Gets Encrypted
+
+Not all data needs encryption. Here's what we protect:
+
+| Field | Encrypted | Why |
+|-------|-----------|-----|
+| `transactions.description` | ✅ Yes | Reveals spending habits |
+| `transactions.amount` | ✅ Yes | Your exact financial position |
+| `categories.name` | ✅ Yes | Personal category structure |
+| `transactions.date` | ❌ No | Needed for filtering by date |
+| `transactions.amount_sign` | ❌ No | + or - (income/expense) for filtering |
+| `categories.color` | ❌ No | UI only, not sensitive |
+| `category_budgets.amount` | ❌ No | Budget limits, not actual spending |
+
+<Warning>
+**AI chats and investment profiles are NOT encrypted yet.** Only transactions and categories are currently E2E encrypted. AI chat content is visible to the provider, so adding extra protection wouldn't meaningfully increase privacy.
+</Warning>
+
+## Client-Side Decryption Flow
+
+All decryption happens in your browser using the Web Crypto API. The server never sees plaintext data.
+
+### Login Flow
+
+```
+LOGIN
+  |
+  |-> Email + password
+  |
+  |-> Backend: bcrypt validate -> returns { user, key_salt, encrypted_keys[] }
+  |
+  |-> Frontend: UK = Argon2id(password, key_salt)
+  |
+  |-> Frontend: AK = decrypt(encrypted_key, UK)
+  |
+  `-> Dashboard loads encrypted data -> decrypts client-side
+```
+
+### Unlock After Refresh (F5)
+
+```
+REFRESH (F5)
+  |
+  |-> Cookies persist (session valid)
+  |-> Crypto store cleared (keys lost)
+  |
+  `-> Redirect to /unlock (PIN configured) OR /setup-pin (password = encryption source)
+       |
+       |-> Re-enter password or PIN
+       |-> GET /auth/keys -> get key_salt, encrypted_keys
+       |-> Re-derive UK, decrypt AKs
+       `-> Back to dashboard
+```
+
+<Info>
+**Key insight:** The server never sees your password after login, never sees your decrypted keys, and never sees your plain text data. It's just a dumb storage layer for encrypted blobs.
+</Info>
+
+### Implementation Example
+
+```typescript
+// frontend/stores/cryptoStore.ts
+
+export const useCryptoStore = create<CryptoStore>((set, get) => ({
+  // ... state ...
+  
+  unlockAccounts: async (accounts) => {
+    const { userKey } = get()
+    if (!userKey) throw new Error('User key not available')
+
+    const newAccountKeys = new Map<string, AccountKeyInfo>()
+
+    for (const { accountId, encryptedKey, keyVersion } of accounts) {
+      try {
+        const accountKey = await decryptAccountKey(encryptedKey, userKey)
+        newAccountKeys.set(accountId, { key: accountKey, version: keyVersion })
+      } catch (_e) {
+        set({ userKey: null, accountKeys: new Map(), isUnlocked: false, error: 'Wrong password' })
+        throw new Error('Wrong password')
+      }
+    }
+
+    set({ accountKeys: newAccountKeys, isUnlocked: true })
+  },
+}))
+```
+
+## Performance Trade-offs
+
+With E2E encryption, all data processing happens client-side because the server can't read encrypted blobs.
+
+### Server vs. Client-Side Operations
+
+| Operation | Traditional App | Home Account |
+|-----------|-----------------|---------------|
+| SUM(amount) | SQL on server | JS reduce on decrypted data |
+| Filter by amount | SQL WHERE | JS filter after decrypt |
+| Search text | SQL LIKE | JS filter after decrypt |
+| Monthly stats | SQL GROUP BY | JS reduce |
+| Budget spending | SQL aggregate | JS reduce on decrypted transactions |
+
+### Performance Numbers
+
+<Accordion title="Benchmark Results">
+  **Test configuration:** 5000 transactions
+  
+  - **Decryption time:** ~5-50ms
+  - **Total calculation:** ~5ms
+  - **Total overhead:** < 60ms
+  
+  **Conclusion:** For a family accounting app, we'll never hit limits that justify complex optimizations (Web Workers, virtualization, etc.). The trade-offs are accepted for this scope.
+</Accordion>
+
+### Why Client-Side Math Works
+
+```typescript
+// Example: Calculate monthly totals client-side
+const calculateMonthlyTotal = (transactions: DecryptedTransaction[]) => {
+  return transactions.reduce((sum, t) => sum + t.amount, 0)
+}
+
+// 5000 transactions take ~5ms on modern hardware
+// Imperceptible for personal finance use
+```
+
+## Backend Storage
+
+The backend stores only encrypted blobs and cannot access your data.
+
+### Account Keys Table
+
+```sql
+CREATE TABLE account_keys (
+  account_id VARCHAR(36) NOT NULL,
+  user_id VARCHAR(36) NOT NULL,
+  encrypted_key TEXT NOT NULL,  -- base64 encoded: IV + ciphertext
+  key_version INT DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (account_id, user_id)
+);
+```
+
+### Encrypted Transactions
+
+```sql
+CREATE TABLE transactions (
+  id VARCHAR(36) PRIMARY KEY,
+  account_id VARCHAR(36) NOT NULL,
+  date DATE NOT NULL,
+  description_encrypted TEXT NOT NULL,  -- IV + ciphertext + auth tag
+  amount_encrypted TEXT NOT NULL,
+  amount_sign ENUM('positive', 'negative', 'zero') NOT NULL,
+  -- ... other fields
+);
+```
+
+### Backend Controller Example
+
+```typescript
+// backend/controllers/crypto/account-key-controller.ts
+
+export const saveAccountKey = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id: accountId } = req.params
+    const { encryptedKey } = req.body  // Already encrypted by frontend
+    const userId = req.user!.id
+
+    if (!encryptedKey) {
+      res.status(400).json({ error: 'encryptedKey es requerido' })
+      return
+    }
+
+    // Verify access
+    const hasAccess = await AccountRepository.hasAccess(accountId, userId)
+    if (!hasAccess) {
+      res.status(403).json({ error: 'No tienes acceso a esta cuenta' })
+      return
+    }
+
+    // Store encrypted blob (server never sees plaintext)
+    const existing = await AccountKeyRepository.getByAccountAndUser(accountId, userId)
+    if (existing) {
+      await AccountKeyRepository.update({ accountId, userId, encryptedKey })
+    } else {
+      await AccountKeyRepository.create({ accountId, userId, encryptedKey })
+    }
+
+    res.status(200).json({ success: true })
+  } catch (error) {
+    next(error)
+  }
+}
+```
+
+## Security Guarantees
+
+<Steps>
+  <Step title="Server Compromise">
+    If the server is hacked, attackers only get encrypted blobs. Without your password, the data is unreadable.
+  </Step>
+  
+  <Step title="Database Leak">
+    Database dumps contain only encrypted transactions and account keys. The User Key never leaves your browser.
+  </Step>
+  
+  <Step title="Network Interception">
+    All API calls use HTTPS. Even if TLS is compromised, the data is already encrypted with AES-256-GCM.
+  </Step>
+  
+  <Step title="Admin Access">
+    Even server administrators cannot read your data. They have no access to your User Key or decrypted Account Keys.
+  </Step>
+</Steps>
+
+<Warning>
+**Password Loss = Data Loss**: If you lose your password and don't have a recovery phrase set up, your data is **permanently unrecoverable**. This is an inherent trade-off of E2E encryption.
+
+See the [Password Recovery](/security/password-recovery) guide to set up recovery mechanisms.
+</Warning>
+
+## API Endpoints
+
+### Get Encrypted Keys
+
+```bash
+GET /api/auth/keys
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "key_salt": "a1b2c3...",  // Hex-encoded salt for Argon2id
+  "verification_blob": "...",  // Optional: for PIN verification
+  "encrypted_keys": [
+    {
+      "account_id": "acc-001",
+      "encrypted_key": "base64_encrypted_blob...",
+      "key_version": 1
+    }
+  ]
+}
+```
+
+### Update All Keys (Password Change)
+
+```bash
+PUT /api/auth/keys
+Content-Type: application/json
+
+{
+  "updates": [
+    {
+      "accountId": "acc-001",
+      "encryptedKey": "new_encrypted_blob..."
+    }
+  ]
+}
+```
+
+See backend/routes/auth/auth-routes.ts:70 for the full routing implementation.
+
+## Related Topics
+
+- [Password Recovery](/security/password-recovery) - BIP39 recovery phrases and email-based reset
+- [OAuth + PIN](/security/oauth-pin) - Why OAuth users need a PIN for encryption
+- [Account Sharing](/features/account-sharing) - Securely share encrypted accounts with family members

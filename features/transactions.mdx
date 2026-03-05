@@ -1,0 +1,437 @@
+---
+title: 'Transactions'
+description: 'Create, view, update, and delete encrypted financial transactions'
+---
+
+## Overview
+
+Transactions are the core of Home Account's financial tracking system. All transaction data is **end-to-end encrypted** on the client side before being sent to the server, ensuring your financial details remain private.
+
+<Info>
+  Transactions support both encrypted and unencrypted modes for backward compatibility during migration. The system automatically handles encryption when an account is unlocked.
+</Info>
+
+## Transaction Structure
+
+Each transaction contains the following fields:
+
+```typescript backend/models/transactions/index.ts
+export interface Transaction {
+  id: string
+  account_id: string
+  subcategory_id: string | null
+  date: Date
+  description: string
+  amount: number
+  bank_category: string | null
+  bank_subcategory: string | null
+  created_at: Date
+  updated_at?: Date
+  // Encrypted fields (optional during transition)
+  description_encrypted?: string
+  amount_encrypted?: string
+  amount_sign?: 'positive' | 'negative' | 'zero'
+  bank_category_encrypted?: string | null
+  bank_subcategory_encrypted?: string | null
+}
+```
+
+## Creating Transactions
+
+### Client-Side: Automatic Encryption
+
+When creating transactions from the frontend, encryption happens automatically if the account is unlocked:
+
+```typescript frontend/lib/queries/transactions.ts
+export function useCreateTransaction() {
+  const getAccountKey = useCryptoStore((s) => s.getAccountKey)
+
+  return useMutation({
+    mutationFn: async (data: CreateTransactionData) => {
+      const accountKey = getAccountKey(data.account_id)
+
+      // If encryption is enabled (account unlocked), encrypt the data
+      if (accountKey) {
+        const encryptedData = {
+          account_id: data.account_id,
+          date: data.date,
+          subcategory_id: data.subcategory_id,
+          // Encrypted fields
+          description_encrypted: await encrypt(data.description, accountKey),
+          amount_encrypted: await encrypt(data.amount.toString(), accountKey),
+          amount_sign: getAmountSign(data.amount),
+          bank_category_encrypted: data.bank_category
+            ? await encrypt(data.bank_category, accountKey)
+            : null,
+          bank_subcategory_encrypted: data.bank_subcategory
+            ? await encrypt(data.bank_subcategory, accountKey)
+            : null,
+        }
+        return transactionsApi.createEncrypted(encryptedData)
+      }
+
+      // Fallback: send unencrypted (for migration period)
+      return transactionsApi.create(data)
+    },
+  })
+}
+```
+
+### Server-Side: Handling Encrypted Data
+
+The backend controller detects whether data is encrypted and routes accordingly:
+
+```typescript backend/controllers/transactions/transaction-controller.ts
+export const createTransaction = asyncHandler(async (req: Request, res: Response) => {
+  const isEncrypted = 'description_encrypted' in req.body
+
+  if (isEncrypted) {
+    const validationResult = createEncryptedTransactionSchema.safeParse(req.body)
+    if (!validationResult.success) {
+      const firstError = validationResult.error.issues[0]
+      throw new AppError(firstError?.message || 'Datos inválidos', 400)
+    }
+
+    const transaction = await TransactionRepository.createEncrypted(
+      req.user!.id,
+      validationResult.data
+    )
+
+    res.status(201).json({
+      success: true,
+      transaction,
+    })
+    return
+  }
+
+  // Handle unencrypted data...
+})
+```
+
+### API Endpoint
+
+```http
+POST /api/transactions
+Content-Type: application/json
+X-CSRF-Token: <token>
+
+{
+  "account_id": "uuid",
+  "date": "2026-03-05",
+  "description_encrypted": "base64-encrypted-data",
+  "amount_encrypted": "base64-encrypted-data",
+  "amount_sign": "negative",
+  "subcategory_id": "uuid"
+}
+```
+
+## Viewing Transactions
+
+### Fetching with Automatic Decryption
+
+Transactions are automatically decrypted on the client side when fetched:
+
+```typescript frontend/lib/queries/transactions.ts
+export function useTransactions(params: TransactionParams, options?: UseTransactionsOptions) {
+  const getAccountKey = useCryptoStore((s) => s.getAccountKey)
+  const isCryptoReady = useCryptoReady(params.account_id)
+
+  return useQuery({
+    queryKey: transactionKeys.list(params),
+    queryFn: async () => {
+      const response = await transactionsApi.getAll(params)
+
+      // Decrypt if account is unlocked and data is encrypted
+      const accountKey = getAccountKey(params.account_id)
+      if (accountKey && response.transactions.length > 0) {
+        const decryptedTxs = await Promise.all(
+          response.transactions.map((t) =>
+            decryptTransaction(t as Transaction & Partial<EncryptedTransaction>, accountKey)
+          )
+        )
+        return { ...response, transactions: decryptedTxs }
+      }
+
+      return response
+    },
+    // CRITICAL: Only fetch when crypto is ready
+    enabled: (options?.enabled ?? true) && !!params.account_id && isCryptoReady,
+  })
+}
+```
+
+### Pagination and Filtering
+
+The API supports extensive filtering options:
+
+```typescript backend/controllers/transactions/transaction-controller.ts
+export const getTransactions = asyncHandler(async (req: Request, res: Response) => {
+  const {
+    account_id,
+    start_date,
+    end_date,
+    subcategory_id,
+    min_amount,
+    max_amount,
+    search,
+    type,
+    limit,
+    offset,
+  } = validationResult.data
+
+  const { transactions, total } = await TransactionRepository.getByAccountIdWithPagination(
+    {
+      account_id,
+      startDate: start_date,
+      endDate: end_date,
+      subcategory_id,
+      minAmount: min_amount,
+      maxAmount: max_amount,
+      search,
+      type,
+      limit,
+      offset,
+    },
+    req.user!.id
+  )
+
+  res.status(200).json({
+    success: true,
+    transactions,
+    total,
+    limit: limit || 50,
+    offset: offset || 0,
+  })
+})
+```
+
+<Accordion title="Available Query Parameters">
+  - `account_id` (required): The account to query
+  - `start_date`: ISO date string (e.g., "2026-01-01")
+  - `end_date`: ISO date string
+  - `subcategory_id`: Filter by subcategory
+  - `min_amount`: Minimum transaction amount
+  - `max_amount`: Maximum transaction amount
+  - `search`: Text search in descriptions
+  - `type`: Filter by "income", "expense", or "all"
+  - `limit`: Results per page (default: 50)
+  - `offset`: Pagination offset (default: 0)
+</Accordion>
+
+## Updating Transactions
+
+### Update Endpoint
+
+Updates follow the same encryption pattern as creation:
+
+```typescript backend/controllers/transactions/transaction-controller.ts
+export const updateTransaction = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const isEncrypted = 'description_encrypted' in req.body || 'amount_encrypted' in req.body
+
+  if (isEncrypted) {
+    const validationResult = updateEncryptedTransactionSchema.safeParse(req.body)
+    if (!validationResult.success) {
+      const firstError = validationResult.error.issues[0]
+      throw new AppError(firstError?.message || 'Datos inválidos', 400)
+    }
+
+    const transaction = await TransactionRepository.updateEncrypted(
+      id,
+      req.user!.id,
+      validationResult.data
+    )
+
+    if (!transaction) {
+      throw new AppError('Transacción no encontrada', 404)
+    }
+
+    res.status(200).json({
+      success: true,
+      transaction,
+    })
+    return
+  }
+
+  // Handle unencrypted updates...
+})
+```
+
+### Bulk Updates
+
+Update multiple transactions at once by their IDs:
+
+```typescript backend/controllers/transactions/transaction-controller.ts
+export const bulkUpdateByIds = asyncHandler(async (req: Request, res: Response) => {
+  const validationResult = bulkUpdateByIdsSchema.safeParse(req.body)
+  if (!validationResult.success) {
+    const firstError = validationResult.error.issues[0]
+    throw new AppError(firstError?.message || 'Datos inválidos', 400)
+  }
+
+  const { account_id, transaction_ids, subcategory_id } = validationResult.data
+
+  const updatedCount = await TransactionRepository.bulkUpdateByIds(
+    account_id,
+    req.user!.id,
+    transaction_ids,
+    subcategory_id
+  )
+
+  res.status(200).json({
+    success: true,
+    updatedCount,
+    transaction_ids,
+    subcategory_id,
+  })
+})
+```
+
+## Deleting Transactions
+
+### Delete Endpoint
+
+```typescript backend/controllers/transactions/transaction-controller.ts
+export const deleteTransaction = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const deleted = await TransactionRepository.delete(id, req.user!.id)
+
+  if (!deleted) {
+    throw new AppError('Transacción no encontrada', 404)
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Transacción eliminada correctamente',
+  })
+})
+```
+
+<Warning>
+  Deleting a transaction is permanent and cannot be undone. Ensure you have proper confirmation flows in your UI.
+</Warning>
+
+## API Routes
+
+All transaction routes require authentication:
+
+```typescript backend/routes/transactions/transaction-routes.ts
+const router: Router = Router()
+
+router.use(authenticateToken)
+
+// GETs - CRUD básico (los stats/summary se calculan client-side con E2E)
+router.get('/', getTransactions)
+router.get('/:id', getTransactionById)
+
+// Mutaciones
+router.post('/', checkCSRF, createTransaction)
+router.put('/bulk-update-by-ids', checkCSRF, bulkUpdateByIds)
+router.put('/:id', checkCSRF, updateTransaction)
+router.delete('/:id', checkCSRF, deleteTransaction)
+```
+
+<Note>
+  All mutation endpoints (POST, PUT, DELETE) require CSRF tokens for security. GET requests do not require CSRF tokens.
+</Note>
+
+## Encryption Flow
+
+<Steps>
+  <Step title="User Unlocks Account">
+    When a user unlocks their account, the account encryption key is loaded into the crypto store on the client side.
+  </Step>
+  
+  <Step title="Transaction Creation">
+    The user creates a transaction. The frontend detects the account is unlocked and encrypts sensitive fields (description, amount, bank categories) using the account key.
+  </Step>
+  
+  <Step title="Server Storage">
+    The server receives encrypted data and stores it directly in the database without ever seeing the plaintext values.
+  </Step>
+  
+  <Step title="Transaction Retrieval">
+    When fetching transactions, the server returns encrypted data. The client automatically decrypts it using the account key from the crypto store.
+  </Step>
+  
+  <Step title="Account Lock">
+    When the user locks their account, the key is cleared from memory, and encrypted transactions can no longer be decrypted until the account is unlocked again.
+  </Step>
+</Steps>
+
+## Client-Side Statistics
+
+Because transaction data is encrypted, statistics are calculated on the client side after decryption:
+
+```typescript frontend/lib/queries/transactions.ts
+function calculateStatsFromTransactions(transactions: Transaction[]): StatsResponse['stats'] {
+  const incomeTransactions = transactions.filter((t) => Number(t.amount) > 0)
+  const income = incomeTransactions.reduce((sum, t) => sum + Number(t.amount), 0)
+
+  const expenses = transactions
+    .filter((t) => Number(t.amount) < 0)
+    .reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0)
+
+  const balance = income - expenses
+
+  return {
+    income,
+    expenses,
+    balance,
+    transactionCount: transactions.length,
+    incomeByType: {},
+  }
+}
+
+export function useTransactionStats(
+  accountId: string,
+  startDate: string,
+  endDate: string,
+  options?: UseTransactionStatsOptions & { subcategory_id?: string }
+) {
+  const {
+    data: txData,
+    isLoading,
+    error,
+  } = useTransactions(
+    {
+      account_id: accountId,
+      start_date: startDate,
+      end_date: endDate,
+      subcategory_id: options?.subcategory_id,
+      limit: 10000,
+    },
+    {
+      enabled: options?.enabled,
+    }
+  )
+
+  const stats = txData?.transactions ? calculateStatsFromTransactions(txData.transactions) : null
+
+  return {
+    data: stats ? { success: true, stats } : options?.initialData,
+    isLoading,
+    error,
+  }
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Always Use React Query Hooks" icon="hook">
+    Use `useTransactions()`, `useCreateTransaction()`, etc. These hooks handle encryption/decryption automatically.
+  </Card>
+  
+  <Card title="Check Crypto Status" icon="lock">
+    Before fetching transactions, ensure the account is unlocked using `useCryptoReady(accountId)`.
+  </Card>
+  
+  <Card title="Handle Large Datasets" icon="database">
+    For statistics and summaries, set a high limit (10000) to fetch all transactions for accurate calculations.
+  </Card>
+  
+  <Card title="Sanitize User Input" icon="shield">
+    The backend automatically sanitizes descriptions and categories using `sanitizeForStorage()` to prevent XSS attacks.
+  </Card>
+</CardGroup>

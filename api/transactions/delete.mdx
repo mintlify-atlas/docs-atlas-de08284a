@@ -1,0 +1,99 @@
+---
+title: "Delete Transaction"
+api: "DELETE /api/transactions/:id"
+description: "Delete a transaction from the account"
+---
+
+## Overview
+
+This endpoint permanently deletes a transaction from the database. This action cannot be undone.
+
+## Authentication
+
+Requires a valid authentication token. Only transactions belonging to accounts owned by the authenticated user can be deleted.
+
+## Path Parameters
+
+<ParamField path="id" type="string" required>
+  UUID of the transaction to delete
+</ParamField>
+
+## Request
+
+No request body is required. The transaction ID is specified in the URL path.
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the transaction was deleted successfully
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Confirmation message of the deletion
+</ResponseField>
+
+## Examples
+
+### Delete Transaction Request
+
+```bash
+curl -X DELETE https://api.example.com/api/transactions/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Cookie: token=your-auth-token"
+```
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "message": "Transacción eliminada correctamente"
+}
+```
+
+## Error Responses
+
+<ResponseField name="success" type="boolean">
+  Always `false` for errors
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message describing what went wrong
+</ResponseField>
+
+### Common Errors
+
+- **401 Unauthorized**: Missing or invalid authentication token
+- **404 Not Found**: Transaction not found or user doesn't have access to it
+
+### Example Error Response
+
+```json
+{
+  "success": false,
+  "error": "Transacción no encontrada"
+}
+```
+
+## Authorization
+
+The endpoint verifies that:
+
+1. The user is authenticated (valid token)
+2. The transaction exists
+3. The transaction belongs to an account owned by the authenticated user
+
+If any of these checks fail, a 404 error is returned. This prevents users from determining whether a transaction ID exists but belongs to another user.
+
+## Notes
+
+- CSRF protection is enforced for this endpoint
+- This operation is permanent and cannot be undone
+- Deleting a transaction does not affect the account balance calculation, as the transaction is removed from all computations
+- Both encrypted and unencrypted transactions can be deleted using this endpoint
+- If the transaction is part of an imported batch, only this specific transaction is deleted
+
+## Best Practices
+
+1. **Confirmation**: Always show a confirmation dialog to users before deleting transactions
+2. **Error Handling**: Handle 404 errors gracefully - they could indicate the transaction was already deleted
+3. **Audit Trail**: Consider implementing soft deletes in your application if you need to maintain an audit trail

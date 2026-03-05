@@ -1,0 +1,302 @@
+---
+title: "List Transactions"
+api: "GET /api/transactions"
+description: "Retrieve transactions for a specific account with filtering and pagination"
+---
+
+## Overview
+
+This endpoint retrieves transactions for a specified account with support for filtering, searching, and pagination. It returns both encrypted and unencrypted fields depending on how the transactions were created.
+
+## Authentication
+
+Requires a valid authentication token. Only transactions belonging to accounts owned by the authenticated user will be returned.
+
+## Query Parameters
+
+<ParamField query="account_id" type="string" required>
+  UUID of the account to retrieve transactions from
+</ParamField>
+
+<ParamField query="start_date" type="string">
+  Filter transactions from this date onwards (YYYY-MM-DD format)
+</ParamField>
+
+<ParamField query="end_date" type="string">
+  Filter transactions up to this date (YYYY-MM-DD format)
+</ParamField>
+
+<ParamField query="subcategory_id" type="string">
+  Filter transactions by subcategory UUID
+</ParamField>
+
+<ParamField query="min_amount" type="number">
+  Filter transactions with amount greater than or equal to this value
+</ParamField>
+
+<ParamField query="max_amount" type="number">
+  Filter transactions with amount less than or equal to this value
+</ParamField>
+
+<ParamField query="search" type="string">
+  Search term to filter transactions by description. Maximum 255 characters.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter by transaction type
+  
+  <Expandable title="Allowed values">
+    - `income` - Only income transactions
+    - `expense` - Only expense transactions
+    - `all` - Both income and expense (default)
+  </Expandable>
+</ParamField>
+
+<ParamField query="limit" type="number">
+  Number of transactions to return per page. Must be a positive integer. Defaults to 50.
+</ParamField>
+
+<ParamField query="offset" type="number">
+  Number of transactions to skip for pagination. Must be >= 0. Defaults to 0.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the request was successful
+</ResponseField>
+
+<ResponseField name="transactions" type="array">
+  Array of transaction objects with details
+  
+  <Expandable title="Transaction properties">
+    <ResponseField name="id" type="string">
+      UUID of the transaction
+    </ResponseField>
+    
+    <ResponseField name="account_id" type="string">
+      UUID of the account
+    </ResponseField>
+    
+    <ResponseField name="date" type="string">
+      Transaction date (ISO 8601 format)
+    </ResponseField>
+    
+    <ResponseField name="subcategory_id" type="string | null">
+      UUID of the assigned subcategory
+    </ResponseField>
+    
+    <ResponseField name="description" type="string">
+      Transaction description (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="amount" type="number">
+      Transaction amount (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="description_encrypted" type="string">
+      Encrypted description (if encrypted)
+    </ResponseField>
+    
+    <ResponseField name="amount_encrypted" type="string">
+      Encrypted amount (if encrypted)
+    </ResponseField>
+    
+    <ResponseField name="amount_sign" type="string">
+      'positive', 'negative', or 'zero' (if encrypted)
+    </ResponseField>
+    
+    <ResponseField name="bank_category" type="string | null">
+      Bank-assigned category (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="bank_subcategory" type="string | null">
+      Bank-assigned subcategory (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="bank_category_encrypted" type="string | null">
+      Encrypted bank category (if encrypted)
+    </ResponseField>
+    
+    <ResponseField name="bank_subcategory_encrypted" type="string | null">
+      Encrypted bank subcategory (if encrypted)
+    </ResponseField>
+    
+    <ResponseField name="subcategory_name" type="string">
+      Name of the subcategory (from JOIN)
+    </ResponseField>
+    
+    <ResponseField name="subcategory_color" type="string">
+      Color of the subcategory (from JOIN)
+    </ResponseField>
+    
+    <ResponseField name="category_name" type="string">
+      Name of the parent category (from JOIN)
+    </ResponseField>
+    
+    <ResponseField name="category_color" type="string">
+      Color of the parent category (from JOIN)
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp of creation
+    </ResponseField>
+    
+    <ResponseField name="updated_at" type="string">
+      ISO 8601 timestamp of last update
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Total number of transactions matching the filters (before pagination)
+</ResponseField>
+
+<ResponseField name="limit" type="number">
+  Number of transactions returned per page
+</ResponseField>
+
+<ResponseField name="offset" type="number">
+  Number of transactions skipped
+</ResponseField>
+
+## Examples
+
+### Basic Request
+
+```bash
+curl -X GET "https://api.example.com/api/transactions?account_id=123e4567-e89b-12d3-a456-426614174000" \
+  -H "Cookie: token=your-auth-token"
+```
+
+### Request with Filters
+
+```bash
+curl -X GET "https://api.example.com/api/transactions?account_id=123e4567-e89b-12d3-a456-426614174000&start_date=2026-01-01&end_date=2026-03-31&type=expense&limit=20&offset=0" \
+  -H "Cookie: token=your-auth-token"
+```
+
+### Request with Search
+
+```bash
+curl -X GET "https://api.example.com/api/transactions?account_id=123e4567-e89b-12d3-a456-426614174000&search=grocery&subcategory_id=987fcdeb-51a2-43f1-b789-123456789abc" \
+  -H "Cookie: token=your-auth-token"
+```
+
+### Response with Encrypted Transactions
+
+```json
+{
+  "success": true,
+  "transactions": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "account_id": "123e4567-e89b-12d3-a456-426614174000",
+      "date": "2026-03-01T00:00:00.000Z",
+      "description_encrypted": "U2FsdGVkX1+xxx...",
+      "amount_encrypted": "U2FsdGVkX1+yyy...",
+      "amount_sign": "negative",
+      "subcategory_id": "987fcdeb-51a2-43f1-b789-123456789abc",
+      "subcategory_name": "Groceries",
+      "subcategory_color": "#4CAF50",
+      "category_name": "Food & Dining",
+      "category_color": "#8BC34A",
+      "bank_category_encrypted": null,
+      "bank_subcategory_encrypted": null,
+      "created_at": "2026-03-05T10:30:00.000Z",
+      "updated_at": "2026-03-05T10:30:00.000Z"
+    },
+    {
+      "id": "660e8400-e29b-41d4-a716-446655440001",
+      "account_id": "123e4567-e89b-12d3-a456-426614174000",
+      "date": "2026-02-28T00:00:00.000Z",
+      "description_encrypted": "U2FsdGVkX1+zzz...",
+      "amount_encrypted": "U2FsdGVkX1+aaa...",
+      "amount_sign": "positive",
+      "subcategory_id": "111fcdeb-51a2-43f1-b789-123456789def",
+      "subcategory_name": "Salary",
+      "subcategory_color": "#2196F3",
+      "category_name": "Income",
+      "category_color": "#03A9F4",
+      "bank_category_encrypted": null,
+      "bank_subcategory_encrypted": null,
+      "created_at": "2026-03-01T09:00:00.000Z",
+      "updated_at": "2026-03-01T09:00:00.000Z"
+    }
+  ],
+  "total": 2,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+### Response with Unencrypted Transactions
+
+```json
+{
+  "success": true,
+  "transactions": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "account_id": "123e4567-e89b-12d3-a456-426614174000",
+      "date": "2026-03-01T00:00:00.000Z",
+      "description": "Grocery shopping at Whole Foods",
+      "amount": 125.50,
+      "subcategory_id": "987fcdeb-51a2-43f1-b789-123456789abc",
+      "subcategory_name": "Groceries",
+      "subcategory_color": "#4CAF50",
+      "category_name": "Food & Dining",
+      "category_color": "#8BC34A",
+      "bank_category": null,
+      "bank_subcategory": null,
+      "created_at": "2026-03-05T10:30:00.000Z",
+      "updated_at": "2026-03-05T10:30:00.000Z"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+## Error Responses
+
+<ResponseField name="success" type="boolean">
+  Always `false` for errors
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message describing what went wrong
+</ResponseField>
+
+### Common Errors
+
+- **400 Bad Request**: Invalid query parameters (e.g., invalid UUID, invalid date format)
+- **401 Unauthorized**: Missing or invalid authentication token
+- **404 Not Found**: Account not found or user doesn't have access
+
+### Example Error Response
+
+```json
+{
+  "success": false,
+  "error": "account_id debe ser un UUID válido"
+}
+```
+
+## Pagination
+
+To paginate through results:
+
+1. First request: `?account_id=xxx&limit=50&offset=0`
+2. Second request: `?account_id=xxx&limit=50&offset=50`
+3. Third request: `?account_id=xxx&limit=50&offset=100`
+
+Use the `total` field in the response to determine the total number of pages.
+
+## Notes
+
+- The `search` parameter only works with unencrypted transactions (searches the `description` field)
+- For encrypted transactions, filtering by `min_amount` and `max_amount` is not supported as amounts are encrypted
+- The response includes category and subcategory details through database JOINs
+- Transactions are returned in descending order by date (newest first)

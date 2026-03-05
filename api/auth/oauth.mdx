@@ -1,0 +1,296 @@
+---
+title: 'OAuth Authentication'
+description: 'Authenticate with Google or GitHub'
+---
+
+Authenticate users via OAuth providers (Google or GitHub). Supports both new user registration and linking OAuth to existing accounts.
+
+## Google OAuth
+
+### Initiate Google Login
+
+<api>GET /api/auth/google</api>
+
+Redirects the user to Google's OAuth consent screen.
+
+**Query Parameters:**
+- Automatically includes `scope: ['profile', 'email']`
+
+**Example:**
+```html
+<a href="https://api.homeaccount.app/api/auth/google">
+  Sign in with Google
+</a>
+```
+
+### Google OAuth Callback
+
+<api>GET /api/auth/google/callback</api>
+
+Handled automatically by the OAuth provider after user grants consent. Should not be called directly.
+
+**Failure Redirect:**
+On authentication failure, redirects to: `/login?error=oauth_failed`
+
+## GitHub OAuth
+
+### Initiate GitHub Login
+
+<api>GET /api/auth/github</api>
+
+Redirects the user to GitHub's OAuth authorization screen.
+
+**Query Parameters:**
+- Automatically includes `scope: ['user:email']`
+
+**Example:**
+```html
+<a href="https://api.homeaccount.app/api/auth/github">
+  Sign in with GitHub
+</a>
+```
+
+### GitHub OAuth Callback
+
+<api>GET /api/auth/github/callback</api>
+
+Handled automatically by the OAuth provider after user authorizes. Should not be called directly.
+
+**Failure Redirect:**
+On authentication failure, redirects to: `/login?error=oauth_failed`
+
+## OAuth Flow
+
+### 1. User Initiates OAuth
+
+User clicks "Sign in with Google" or "Sign in with GitHub" button, which redirects to:
+- `GET /api/auth/google` for Google
+- `GET /api/auth/github` for GitHub
+
+### 2. Provider Authentication
+
+User is redirected to the OAuth provider (Google/GitHub) to:
+- Authenticate with their provider account
+- Grant permissions (profile, email)
+
+### 3. Callback Processing
+
+Provider redirects back to callback URL with authorization code:
+- `GET /api/auth/google/callback?code=...`
+- `GET /api/auth/github/callback?code=...`
+
+The backend:
+1. Exchanges code for access token
+2. Fetches user profile from provider
+3. Creates or links account
+4. Generates session tokens
+5. Redirects to frontend with tokens
+
+### 4. Account Creation or Linking
+
+Three scenarios:
+
+**A. New User (No Existing Account)**
+- Creates new user with `oauth_provider` and `oauth_id`
+- Email is automatically verified
+- No password is set (OAuth-only account)
+- Redirects to `/setup-pin` to configure PIN
+
+**B. Existing User with Password**
+- Links OAuth to existing account
+- Preserves existing password
+- Updates `oauth_provider`, `oauth_id`, and `avatar_url`
+- Redirects to `/unlock` if encryption keys exist, otherwise `/setup-pin`
+
+**C. Existing OAuth User**
+- Updates OAuth information (avatar, etc.)
+- Redirects to `/unlock` or `/setup-pin` based on encryption status
+
+### 5. Final Redirect
+
+User is redirected to frontend auth callback page with tokens:
+
+```
+GET /auth-callback?accessToken=...&refreshToken=...&csrfToken=...&redirect=/unlock
+```
+
+The frontend:
+1. Stores tokens as httpOnly cookies
+2. Redirects to the specified path (`/setup-pin` or `/unlock`)
+
+## Response (via Redirect)
+
+The OAuth callback redirects to the frontend with URL parameters:
+
+<ResponseField name="accessToken" type="string">
+  JWT access token (15 minute expiry)
+</ResponseField>
+
+<ResponseField name="refreshToken" type="string">
+  JWT refresh token (8 hour expiry)
+</ResponseField>
+
+<ResponseField name="csrfToken" type="string">
+  CSRF token for authenticated requests
+</ResponseField>
+
+<ResponseField name="redirect" type="string">
+  Path to redirect user after setting cookies:
+  - `/setup-pin`: New users or users without encryption
+  - `/unlock`: Existing users with encryption keys
+</ResponseField>
+
+## OAuth Profile Structure
+
+The backend extracts the following information from OAuth providers:
+
+```typescript
+interface OAuthProfile {
+  provider: 'google' | 'github'
+  id: string              // Provider's user ID
+  email: string           // User's email from provider
+  name: string            // Display name
+  avatar?: string         // Profile picture URL
+}
+```
+
+### Google Profile Mapping
+
+- `id`: Google user ID
+- `email`: Primary email from `profile.emails[0].value`
+- `name`: Display name from `profile.displayName`
+- `avatar`: Profile photo from `profile.photos[0].value`
+
+### GitHub Profile Mapping
+
+- `id`: GitHub user ID
+- `email`: Primary email from `profile.emails[0].value`
+  - Falls back to `{username}@github.local` if email not available
+- `name`: Display name or username
+- `avatar`: Profile photo from `profile.photos[0].value`
+
+## PIN Setup Requirement
+
+OAuth users **must** set up a PIN after their first login:
+
+1. OAuth login succeeds
+2. User is redirected to `/setup-pin?csrf={token}`
+3. User creates a numeric PIN (6-8 digits)
+4. PIN is used for:
+   - Unlocking the app
+   - Client-side encryption/decryption
+   - Transaction authorization
+
+<Warning>
+  **Important**: Even though OAuth users don't have a password, they still need a PIN for encryption and security within the app.
+</Warning>
+
+## Example OAuth Flow (Google)
+
+```bash
+# 1. User clicks "Sign in with Google"
+GET https://api.homeaccount.app/api/auth/google
+
+# 2. Redirects to Google OAuth consent screen
+GET https://accounts.google.com/o/oauth2/v2/auth?client_id=...
+
+# 3. User grants permissions, Google redirects back
+GET https://api.homeaccount.app/api/auth/google/callback?code=AUTH_CODE
+
+# 4. Backend processes OAuth and redirects to frontend
+GET https://app.homeaccount.com/auth-callback?accessToken=...&refreshToken=...&csrfToken=...&redirect=/setup-pin
+
+# 5. Frontend sets cookies and redirects to /setup-pin
+```
+
+## Error Handling
+
+### Invalid OAuth Profile
+
+If the OAuth provider doesn't return a valid email:
+
+```
+Redirect: /login?error=oauth_invalid
+```
+
+### OAuth Provider Failure
+
+If OAuth authentication fails at the provider level:
+
+```
+Redirect: /login?error=oauth_failed
+```
+
+### Account Linking Rules
+
+| Scenario | Email Match | Has Password | Action |
+|----------|-------------|--------------|--------|
+| New user | No | N/A | Create OAuth account |
+| Existing user | Yes | Yes | Link OAuth, keep password |
+| OAuth-only user | Yes | No | Update OAuth info |
+
+## Security Considerations
+
+1. **No Session Tokens**: OAuth uses session-less authentication via Passport.js (`session: false`)
+2. **Email Verification**: OAuth emails are automatically verified (trusted providers)
+3. **Token Transfer**: Tokens passed via URL params to frontend auth-callback page (secure over HTTPS)
+4. **CSRF Protection**: CSRF token required for all subsequent authenticated requests
+5. **Provider Trust**: Only Google and GitHub are supported as trusted OAuth providers
+6. **No Password**: OAuth-only accounts don't have a password (can't use `/api/auth/login`)
+
+## Supported Providers
+
+| Provider | Strategy | Scopes | Callback URL |
+|----------|----------|--------|-------------|
+| Google | `passport-google-oauth20` | `profile`, `email` | `/api/auth/google/callback` |
+| GitHub | `passport-github2` | `user:email` | `/api/auth/github/callback` |
+
+## Configuration
+
+OAuth providers are configured via environment variables:
+
+```bash
+# Google OAuth
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+
+# GitHub OAuth
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+
+# Callback base URL
+OAUTH_CALLBACK_URL=https://api.homeaccount.app
+
+# Frontend URL for redirects
+FRONTEND_URL=https://app.homeaccount.com
+```
+
+## Implementation Details
+
+- **Passport.js**: Uses Passport strategies for OAuth providers
+- **Account Repository**: `UserRepository.createOAuth()` creates OAuth users
+- **Account Linking**: `UserRepository.linkOAuth()` links OAuth to existing accounts
+- **Token Generation**: Same JWT tokens as email/password login
+- **Avatar Storage**: OAuth avatar URLs stored in `avatar_url` field
+
+## Differences from Email/Password Login
+
+| Feature | OAuth | Email/Password |
+|---------|-------|----------------|
+| Email Verification | Automatic | Manual (email link) |
+| Password | Not set | Required |
+| PIN Setup | Required after first login | Optional |
+| Login Endpoint | Provider redirect | `POST /api/auth/login` |
+| Account Linking | Automatic if email matches | N/A |
+
+## Source Code
+
+OAuth Routes: `backend/routes/auth/oauth-routes.ts`
+
+OAuth Controller: `backend/controllers/auth/oauth-controller.ts:12`
+
+OAuth Config: `backend/config/oauth.ts:13`
+
+Google Strategy: `backend/config/oauth.ts:23`
+
+GitHub Strategy: `backend/config/oauth.ts:49`

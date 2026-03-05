@@ -1,0 +1,495 @@
+---
+title: 'Multi-Account Management'
+description: 'Create and manage multiple financial accounts with separate budgets and encryption keys'
+icon: 'layer-group'
+---
+
+Home Account supports multiple financial accounts, allowing you to organize transactions by purpose, household, or user. Each account has its own categories, budgets, members, and encryption keys.
+
+## Use Cases
+
+Multiple accounts are useful for:
+
+- **Personal vs. Shared**: Separate your personal expenses from household expenses
+- **Multiple Households**: Manage finances for different properties or families
+- **Savings Goals**: Track different savings goals independently
+- **Business vs. Personal**: Keep business and personal finances separate
+- **Shared with Partner**: Create a joint account while maintaining personal accounts
+
+<Info>
+You can create up to **3 accounts** as the owner. You can be a member of unlimited accounts created by others.
+</Info>
+
+## Creating an Account
+
+When you create a new account, the system automatically:
+1. Creates the account record
+2. Assigns you as the owner
+3. Generates an encryption key (for encrypted accounts)
+4. Copies default categories and subcategories
+
+```typescript
+// Backend: account-repository.ts
+static async createWithDefaults({
+  name,
+  userId,
+  encryptedAccountKey,
+}: CreateAccountDTO): Promise<{
+  account: Account
+  categoriesCopied: { categories: number; subcategories: number }
+}> {
+  const ownedCount = await this.countOwnedAccounts(userId)
+  if (ownedCount >= MAX_OWNED_ACCOUNTS) {
+    throw new AppError('Account limit reached', 400)
+  }
+
+  const connection = await db.getConnection()
+
+  try {
+    await connection.beginTransaction()
+
+    const accountId = crypto.randomUUID()
+    const accountUserId = crypto.randomUUID()
+
+    // Create account
+    await connection.query(
+      `INSERT INTO accounts (id, name, owner_id) VALUES (?, ?, ?)`,
+      [accountId, name, userId]
+    )
+
+    // Add user as owner
+    await connection.query(
+      `INSERT INTO account_users (id, account_id, user_id, role)
+       VALUES (?, ?, ?, 'owner')`,
+      [accountUserId, accountId, userId]
+    )
+
+    // Store encrypted account key
+    if (encryptedAccountKey) {
+      const accountKeyId = crypto.randomUUID()
+      await connection.query(
+        `INSERT INTO account_keys (id, account_id, user_id, encrypted_key, key_version)
+         VALUES (?, ?, ?, ?, 1)`,
+        [accountKeyId, accountId, userId, encryptedAccountKey]
+      )
+    }
+
+    // Copy default categories
+    const [defaultCategories] = await connection.query<any[]>(
+      `SELECT id, name, color, icon, subcategories FROM default_categories`
+    )
+
+    let categoriesCount = 0
+    let subcategoriesCount = 0
+
+    for (const dc of defaultCategories) {
+      const categoryId = crypto.randomUUID()
+
+      await connection.query(
+        `INSERT INTO categories (id, account_id, name, color, icon)
+         VALUES (?, ?, ?, ?, ?)`,
+        [categoryId, accountId, dc.name, dc.color, dc.icon]
+      )
+      categoriesCount++
+
+      const subcategories = typeof dc.subcategories === 'string' 
+        ? JSON.parse(dc.subcategories) 
+        : dc.subcategories
+
+      for (const subName of subcategories) {
+        const subId = crypto.randomUUID()
+        await connection.query(
+          `INSERT INTO subcategories (id, category_id, name) VALUES (?, ?, ?)`,
+          [subId, categoryId, subName]
+        )
+        subcategoriesCount++
+      }
+    }
+
+    await connection.commit()
+
+    return {
+      account: { id: accountId, name, owner_id: userId, created_at: new Date() },
+      categoriesCopied: { categories: categoriesCount, subcategories: subcategoriesCount }
+    }
+  } catch (error) {
+    await connection.rollback()
+    throw new AppError('Internal error creating account', 500)
+  } finally {
+    connection.release()
+  }
+}
+```
+
+<Steps>
+  <Step title="Navigate to Settings">
+    Go to Settings → Accounts section
+  </Step>
+
+  <Step title="Click 'Create Account'">
+    Enter a descriptive name for the account (e.g., "Household Budget", "Vacation Savings")
+  </Step>
+
+  <Step title="Configure Encryption (Optional)">
+    If using end-to-end encryption, a unique encryption key is generated for this account
+  </Step>
+
+  <Step title="Categories Copied">
+    Default categories and subcategories are automatically copied to the new account
+  </Step>
+</Steps>
+
+## Account Roles
+
+Each account has two roles:
+
+| Role | Permissions |
+|------|-------------|
+| **Owner** | Full control: manage members, delete account, modify settings, create/edit transactions |
+| **Member** | Can view and create transactions, cannot modify account settings or members |
+
+```typescript
+// Backend: Check user role
+static async getUserRole(
+  accountId: string, 
+  userId: string
+): Promise<AccountRole | null> {
+  const [rows] = await db.query<AccountUserRow[]>(
+    `SELECT role FROM account_users 
+     WHERE account_id = ? AND user_id = ?`,
+    [accountId, userId]
+  )
+
+  return rows[0]?.role || null
+}
+```
+
+<Warning>
+Only the **owner** can delete the account or remove members. Owners cannot leave an account without first transferring ownership.
+</Warning>
+
+## Switching Between Accounts
+
+You can quickly switch between accounts using the account selector in the navigation bar.
+
+```typescript
+// Frontend: Account context
+const { account, setAccount } = useAuth()
+
+// All queries are scoped to the current account
+const { data: transactions } = useTransactions(account?.id || '')
+const { data: categories } = useCategories(account?.id || '')
+```
+
+<Note>
+When you switch accounts, all data (transactions, categories, budgets) automatically updates to show the selected account's data.
+</Note>
+
+## Encryption Keys Per Account
+
+Each account has its own encryption key for end-to-end encryption. This ensures that:
+- Transactions in one account cannot decrypt transactions in another
+- Sharing an account doesn't compromise other accounts
+- Members only receive encryption keys for accounts they have access to
+
+```typescript
+// Backend: Store encrypted account key
+export const saveAccountKey = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id: accountId } = req.params
+    const { encryptedKey } = req.body
+    const userId = req.user!.id
+
+    if (!encryptedKey) {
+      res.status(400).json({ error: 'encryptedKey es requerido' })
+      return
+    }
+
+    // Verify user has access to the account
+    const hasAccess = await AccountRepository.hasAccess(accountId, userId)
+    if (!hasAccess) {
+      res.status(403).json({ error: 'No tienes acceso a esta cuenta' })
+      return
+    }
+
+    // Check if key already exists
+    const existing = await AccountKeyRepository.getByAccountAndUser(accountId, userId)
+
+    if (existing) {
+      await AccountKeyRepository.update({ accountId, userId, encryptedKey })
+    } else {
+      await AccountKeyRepository.create({ accountId, userId, encryptedKey })
+    }
+
+    res.status(200).json({ success: true })
+  } catch (error) {
+    next(error)
+  }
+}
+```
+
+### How Encryption Keys Work
+
+1. **Owner Creates Account**: A unique account key is generated and encrypted with the owner's master key
+2. **Member Joins**: The owner re-encrypts the account key with the member's public key
+3. **User Logs In**: All account keys are decrypted using the user's master key
+4. **Viewing Transactions**: Each transaction is decrypted using the account's key
+
+<Accordion title="Key Storage Schema">
+```sql
+CREATE TABLE account_keys (
+  id VARCHAR(36) PRIMARY KEY,
+  account_id VARCHAR(36) NOT NULL,
+  user_id VARCHAR(36) NOT NULL,
+  encrypted_key TEXT NOT NULL,  -- Account key encrypted with user's master key
+  key_version INT DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_account_user (account_id, user_id),
+  FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+</Accordion>
+
+## Managing Account Members
+
+### Viewing Members
+
+```typescript
+// Backend: Get account members
+static async getMembers(accountId: string, userId: string): Promise<any[]> {
+  const hasAccess = await this.hasAccess(accountId, userId)
+  if (!hasAccess) {
+    throw new AppError('You do not have access to this account', 403)
+  }
+
+  const [rows] = await db.query<any[]>(
+    `SELECT u.id, u.email, u.name, au.role, au.created_at as joined_at
+     FROM users u
+     INNER JOIN account_users au ON au.user_id = u.id
+     WHERE au.account_id = ?
+     ORDER BY au.role DESC, au.created_at ASC`,
+    [accountId]
+  )
+
+  return rows
+}
+```
+
+### Adding Members
+
+Members are added through the invitation system. See the [Invitations documentation](/api/accounts/invitations) for details.
+
+<Steps>
+  <Step title="Owner Creates Invitation">
+    Generate an invitation link with optional expiration
+  </Step>
+
+  <Step title="Share Link">
+    Send the invitation link to the person you want to add
+  </Step>
+
+  <Step title="Member Accepts">
+    The invited user accepts the invitation and gains access to the account
+  </Step>
+
+  <Step title="Key Exchange">
+    For encrypted accounts, the account key is securely shared with the new member
+  </Step>
+</Steps>
+
+### Removing Members
+
+Only the owner can remove members:
+
+```typescript
+// Backend: Remove member
+static async removeMember(
+  accountId: string,
+  ownerId: string,
+  memberId: string
+): Promise<boolean> {
+  const role = await this.getUserRole(accountId, ownerId)
+
+  if (role !== 'owner') {
+    throw new AppError('Only the owner can remove members', 403)
+  }
+
+  if (ownerId === memberId) {
+    throw new AppError('The owner cannot remove themselves', 400)
+  }
+
+  const connection = await db.getConnection()
+  try {
+    await connection.beginTransaction()
+
+    // Delete encryption key
+    await connection.query(
+      `DELETE FROM account_keys WHERE account_id = ? AND user_id = ?`,
+      [accountId, memberId]
+    )
+
+    // Remove member
+    const [result] = await connection.query<any>(
+      `DELETE FROM account_users WHERE account_id = ? AND user_id = ?`,
+      [accountId, memberId]
+    )
+
+    await connection.commit()
+    return result.affectedRows > 0
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+```
+
+<Warning>
+Removing a member also deletes their encryption key for the account. They will lose access to all transactions immediately.
+</Warning>
+
+## Leaving an Account
+
+Members can leave accounts they don't own:
+
+```typescript
+// Backend: Leave account
+static async leaveAccount(accountId: string, userId: string): Promise<void> {
+  const role = await this.getUserRole(accountId, userId)
+
+  if (role === null) {
+    throw new AppError('You do not have access to this account', 403)
+  }
+
+  if (role === 'owner') {
+    throw new AppError(
+      'The owner cannot leave the account. Transfer ownership first.', 
+      400
+    )
+  }
+
+  const connection = await db.getConnection()
+  try {
+    await connection.beginTransaction()
+
+    await connection.query(
+      `DELETE FROM account_keys WHERE account_id = ? AND user_id = ?`,
+      [accountId, userId]
+    )
+
+    await connection.query(
+      `DELETE FROM account_users WHERE account_id = ? AND user_id = ?`,
+      [accountId, userId]
+    )
+
+    await connection.commit()
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+```
+
+## Deleting an Account
+
+Only the owner can delete an account:
+
+```typescript
+// Backend: Delete account
+static async delete(accountId: string, userId: string): Promise<boolean> {
+  const role = await this.getUserRole(accountId, userId)
+
+  if (role !== 'owner') {
+    throw new AppError('Only the owner can delete the account', 403)
+  }
+
+  const [result] = await db.query<any>(
+    `DELETE FROM accounts WHERE id = ?`,
+    [accountId]
+  )
+
+  return result.affectedRows > 0
+}
+```
+
+<Warning>
+Deleting an account permanently removes:
+- All transactions
+- All categories and subcategories
+- All budgets
+- All member access
+- All encryption keys
+
+This action **cannot be undone**.
+</Warning>
+
+## Updating Account Settings
+
+Owners can update account settings:
+
+```typescript
+// Backend: Update account name
+static async update(
+  accountId: string,
+  userId: string,
+  { name }: UpdateAccountDTO
+): Promise<Account | null> {
+  const role = await this.getUserRole(accountId, userId)
+
+  if (role !== 'owner') {
+    throw new AppError('Only the owner can modify the account', 403)
+  }
+
+  await db.query(
+    `UPDATE accounts SET name = ? WHERE id = ?`,
+    [name, accountId]
+  )
+
+  const [rows] = await db.query<AccountRow[]>(
+    `SELECT id, name, owner_id, created_at, updated_at 
+     FROM accounts WHERE id = ?`,
+    [accountId]
+  )
+
+  return rows[0] || null
+}
+```
+
+## Best Practices
+
+<Accordion title="Organizing Multiple Accounts">
+  - Use clear, descriptive names (e.g., "Household Budget", "Personal", "Vacation Fund")
+  - Create separate accounts for different purposes or households
+  - Avoid creating too many accounts - 2-3 is usually sufficient
+  - Use categories and subcategories within accounts for detailed organization
+</Accordion>
+
+<Accordion title="Managing Shared Accounts">
+  - Designate one person as the owner for administrative tasks
+  - Add members through secure invitation links
+  - Regularly review member list and remove inactive members
+  - Use member permissions to control who can modify data
+</Accordion>
+
+<Accordion title="Security Considerations">
+  - Each account has its own encryption key - keep your master password secure
+  - Removing a member revokes their access immediately
+  - Account keys are re-encrypted when you change your password
+  - Never share your master password - use the invitation system instead
+</Accordion>
+
+<Accordion title="Account Limits">
+  - Maximum 3 owned accounts per user
+  - No limit on accounts where you're a member
+  - To create more accounts, delete unused ones or have someone else create it
+  - Consider using categories instead of multiple accounts for organization
+</Accordion>

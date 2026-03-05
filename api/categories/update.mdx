@@ -1,0 +1,170 @@
+---
+title: 'Update Category'
+description: 'Update an existing category'
+---
+
+## Endpoint
+
+```
+PUT /api/categories/:id
+```
+
+Updates an existing category. All fields are optional, allowing partial updates.
+
+## Authentication
+
+This endpoint requires authentication via Bearer token and CSRF protection.
+
+## Path Parameters
+
+<ParamField path="id" type="string" required>
+  The UUID of the category to update.
+</ParamField>
+
+## Request Body
+
+All fields are optional. Only include fields you want to update.
+
+<ParamField body="name" type="string">
+  The new category name. Must be between 3 and 23 characters if provided.
+</ParamField>
+
+<ParamField body="name_encrypted" type="string">
+  Updated encrypted version of the category name.
+</ParamField>
+
+<ParamField body="color" type="string">
+  Updated hex color code (e.g., `#10B981`). Must be a valid 6-digit hex color or empty string.
+</ParamField>
+
+<ParamField body="icon" type="string">
+  Updated icon identifier. Maximum 50 characters.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the request was successful.
+</ResponseField>
+
+<ResponseField name="category" type="object">
+  The updated category object.
+  
+  <Expandable title="Category Object">
+    <ResponseField name="id" type="string">
+      The unique UUID of the category.
+    </ResponseField>
+    
+    <ResponseField name="account_id" type="string">
+      The UUID of the account this category belongs to.
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      The updated category name.
+    </ResponseField>
+    
+    <ResponseField name="color" type="string">
+      The updated hex color code.
+    </ResponseField>
+    
+    <ResponseField name="icon" type="string | null">
+      The updated icon identifier, or null.
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp of when the category was created.
+    </ResponseField>
+    
+    <ResponseField name="updated_at" type="string | null">
+      ISO 8601 timestamp of when the category was last updated.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X PUT https://api.yourapp.com/api/categories/987fcdeb-51a2-43e7-9abc-123456789def \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: YOUR_CSRF_TOKEN" \
+  -d '{
+    "name": "Food & Groceries",
+    "color": "#059669"
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "category": {
+    "id": "987fcdeb-51a2-43e7-9abc-123456789def",
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "name": "Food & Groceries",
+    "color": "#059669",
+    "icon": "shopping-cart",
+    "created_at": "2026-03-01T10:00:00.000Z",
+    "updated_at": "2026-03-05T15:30:00.000Z"
+  }
+}
+```
+
+## Partial Update Example
+
+You can update just the color:
+
+```bash
+curl -X PUT https://api.yourapp.com/api/categories/987fcdeb-51a2-43e7-9abc-123456789def \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: YOUR_CSRF_TOKEN" \
+  -d '{
+    "color": "#EF4444"
+  }'
+```
+
+## Error Responses
+
+<ResponseField name="400" type="error">
+  Bad Request - Invalid input data.
+  
+  ```json
+  {
+    "success": false,
+    "message": "El color debe ser un código hexadecimal válido"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="404" type="error">
+  Not Found - Category does not exist or user does not have access.
+  
+  ```json
+  {
+    "success": false,
+    "message": "Categoría no encontrada"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="409" type="error">
+  Conflict - Category with this name already exists.
+  
+  ```json
+  {
+    "success": false,
+    "message": "Category with this name already exists"
+  }
+  ```
+</ResponseField>
+
+## Notes
+
+- All request body fields are optional
+- Only the fields included in the request will be updated
+- The `name` field is automatically sanitized for storage
+- The user must own the category or have access to the associated account
+- Category names must be unique within an account
+- If no fields are provided, the category is returned unchanged

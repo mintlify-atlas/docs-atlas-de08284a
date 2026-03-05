@@ -1,0 +1,131 @@
+---
+title: "Create Budget"
+api: "POST /budget"
+description: "Create a new budget for a category"
+---
+
+Creates a budget to track spending limits for a specific category. Each category can only have one budget. Budgets support weekly, monthly, and yearly periods with configurable alert thresholds.
+
+## Request Body
+
+<ParamField body="account_id" type="string" required>
+  The UUID of the account this budget belongs to
+</ParamField>
+
+<ParamField body="category_id" type="string" required>
+  The UUID of the category to budget for. Each category can only have one budget.
+</ParamField>
+
+<ParamField body="amount" type="number" required>
+  The budget amount in cents. Must be a positive integer between 1 and 90000000 (900,000€)
+</ParamField>
+
+<ParamField body="period" type="string" required>
+  The budget period. Must be one of:
+  - `weekly` - Budget resets every week
+  - `monthly` - Budget resets every month
+  - `yearly` - Budget resets every year
+</ParamField>
+
+<ParamField body="alert_threshold" type="number" default="80">
+  The percentage at which to trigger spending alerts. Must be between 50 and 100. Defaults to 80.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  The created budget object
+  
+  <Expandable title="Budget object">
+    <ResponseField name="id" type="string">
+      The unique UUID identifier for the budget
+    </ResponseField>
+    
+    <ResponseField name="account_id" type="string">
+      The UUID of the account this budget belongs to
+    </ResponseField>
+    
+    <ResponseField name="category_id" type="string">
+      The UUID of the category this budget applies to
+    </ResponseField>
+    
+    <ResponseField name="amount" type="number">
+      The budget amount in cents
+    </ResponseField>
+    
+    <ResponseField name="period" type="string">
+      The budget period: `weekly`, `monthly`, or `yearly`
+    </ResponseField>
+    
+    <ResponseField name="alert_threshold" type="number">
+      The percentage threshold for spending alerts (50-100)
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp when the budget was created
+    </ResponseField>
+    
+    <ResponseField name="updated_at" type="string">
+      ISO 8601 timestamp when the budget was last updated
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<RequestExample>
+```bash cURL
+curl -X POST https://api.homeaccount.com/budget \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "X-CSRF-Token: YOUR_CSRF_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "category_id": "987fcdeb-51a2-43d7-9f12-345678901234",
+    "amount": 50000,
+    "period": "monthly",
+    "alert_threshold": 85
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success Response
+{
+  "success": true,
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "category_id": "987fcdeb-51a2-43d7-9f12-345678901234",
+    "amount": 50000,
+    "period": "monthly",
+    "alert_threshold": 85,
+    "created_at": "2026-03-05T10:30:00.000Z",
+    "updated_at": "2026-03-05T10:30:00.000Z"
+  }
+}
+```
+
+```json Error - Budget Already Exists
+{
+  "success": false,
+  "message": "Ya existe un presupuesto para esta categoría"
+}
+```
+
+```json Error - Invalid Parameters
+{
+  "success": false,
+  "message": "La cantidad debe ser mayor a 0, El periodo debe ser semanal, mensual o anual"
+}
+```
+</ResponseExample>
+
+## Error Codes
+
+- `400` - Invalid request parameters or budget already exists for category
+- `401` - Missing or invalid authentication token
+- `403` - Invalid CSRF token
+- `500` - Internal server error

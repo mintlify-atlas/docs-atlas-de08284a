@@ -1,0 +1,244 @@
+---
+title: 'Get Investment Recommendations'
+api: 'POST /api/investment/:accountId/recommendations'
+---
+
+Generates personalized investment recommendations using AI based on the user's risk profile and available monthly investment amount. Returns specific asset allocations with current market prices.
+
+<Info>
+This endpoint uses AI and counts as 1 AI request toward your rate limit.
+</Info>
+
+## Authentication
+
+Requires a valid Bearer token in the Authorization header.
+
+## Path Parameters
+
+<ParamField path="accountId" type="string" required>
+  The unique identifier of the account to generate recommendations for
+</ParamField>
+
+## Request Body
+
+<ParamField body="profile" type="string">
+  Investment risk profile to use for recommendations. If not provided, uses the profile from the user's stored investment profile.
+  
+  Options: `conservative`, `balanced`, `dynamic`
+</ParamField>
+
+<ParamField body="monthlyAmount" type="number">
+  Monthly investment amount in euros (must be positive). If not provided, calculates based on stored savings capacity and investment percentage.
+</ParamField>
+
+<ParamField body="includeExplanation" type="boolean">
+  Whether to include detailed explanations for each recommendation (currently not used in response)
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  AI-generated investment recommendations
+  
+  <Expandable title="data properties">
+    <ResponseField name="recommendations" type="array">
+      Array of specific investment recommendations
+      
+      <Expandable title="recommendation item properties">
+        <ResponseField name="type" type="string">
+          Type of investment asset
+          
+          Values: `ETF`, `BOND_FUND`, `CRYPTO`, `STOCK`, `SAVINGS`
+        </ResponseField>
+        
+        <ResponseField name="symbol" type="string">
+          Trading symbol or ticker for the asset
+        </ResponseField>
+        
+        <ResponseField name="name" type="string">
+          Full name of the investment product
+        </ResponseField>
+        
+        <ResponseField name="percentage" type="number">
+          Percentage of monthly investment to allocate
+        </ResponseField>
+        
+        <ResponseField name="amount" type="number">
+          Calculated euro amount for this investment
+        </ResponseField>
+        
+        <ResponseField name="currentPrice" type="number">
+          Current market price (if available)
+        </ResponseField>
+        
+        <ResponseField name="units" type="number">
+          Number of units/shares this amount would purchase
+        </ResponseField>
+        
+        <ResponseField name="reason" type="string">
+          Explanation for why this asset is recommended
+        </ResponseField>
+        
+        <ResponseField name="risk" type="string">
+          Risk level of this specific investment
+          
+          Values: `low`, `medium`, `high`
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="totalMonthly" type="number">
+      Total monthly investment amount across all recommendations
+    </ResponseField>
+    
+    <ResponseField name="assetAllocation" type="object">
+      Overall portfolio allocation percentages
+      
+      <Expandable title="assetAllocation properties">
+        <ResponseField name="stocks" type="number">
+          Percentage allocated to stocks and equity ETFs
+        </ResponseField>
+        
+        <ResponseField name="bonds" type="number">
+          Percentage allocated to bonds and fixed income
+        </ResponseField>
+        
+        <ResponseField name="crypto" type="number">
+          Percentage allocated to cryptocurrencies
+        </ResponseField>
+        
+        <ResponseField name="cash" type="number">
+          Percentage kept in cash or savings accounts
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="marketContext" type="string">
+      Current market conditions and how they affect recommendations
+    </ResponseField>
+    
+    <ResponseField name="disclaimer" type="string">
+      Important legal and risk disclaimers
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X POST 'https://api.example.com/api/investment/acc_123/recommendations' \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "profile": "balanced",
+    "monthlyAmount": 500
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "recommendations": [
+      {
+        "type": "ETF",
+        "symbol": "VWCE",
+        "name": "Vanguard FTSE All-World UCITS ETF",
+        "percentage": 60,
+        "amount": 300,
+        "currentPrice": 105.50,
+        "units": 2.84,
+        "reason": "Diversified global equity exposure with low costs, ideal for long-term balanced portfolios",
+        "risk": "medium"
+      },
+      {
+        "type": "BOND_FUND",
+        "symbol": "AGGH",
+        "name": "iShares Core Global Aggregate Bond UCITS ETF",
+        "percentage": 30,
+        "amount": 150,
+        "currentPrice": 55.20,
+        "units": 2.72,
+        "reason": "Provides stability and reduces portfolio volatility with investment-grade bonds",
+        "risk": "low"
+      },
+      {
+        "type": "CRYPTO",
+        "symbol": "BTC",
+        "name": "Bitcoin",
+        "percentage": 5,
+        "amount": 25,
+        "currentPrice": 45000,
+        "units": 0.00056,
+        "reason": "Small allocation for potential high growth, appropriate for balanced risk tolerance",
+        "risk": "high"
+      },
+      {
+        "type": "SAVINGS",
+        "symbol": "CASH",
+        "name": "High-Yield Savings Account",
+        "percentage": 5,
+        "amount": 25,
+        "reason": "Emergency fund buffer and immediate liquidity needs",
+        "risk": "low"
+      }
+    ],
+    "totalMonthly": 500,
+    "assetAllocation": {
+      "stocks": 60,
+      "bonds": 30,
+      "crypto": 5,
+      "cash": 5
+    },
+    "marketContext": "Current markets show moderate volatility. S&P 500 is up 1.2% this month. Bond yields remain stable. This balanced approach provides growth potential while managing downside risk.",
+    "disclaimer": "This recommendation is not financial advice. Past performance does not guarantee future results. Consider consulting a certified financial advisor before making investment decisions."
+  }
+}
+```
+
+## AI Provider Integration
+
+This endpoint uses the configured AI provider to:
+
+- Analyze current market conditions from real-time data
+- Match investment products to the risk profile
+- Calculate optimal allocation percentages
+- Provide personalized reasoning for each recommendation
+- Consider the user's financial context and experience level
+
+The AI pulls live market data for S&P 500, MSCI World, Nasdaq, Bitcoin, Ethereum, and currency exchange rates to inform recommendations.
+
+## Profile-Based Allocation
+
+The AI adjusts recommendations based on the profile:
+
+- **Conservative**: Higher bonds/cash (60-80%), lower stocks (20-40%), minimal/no crypto
+- **Balanced**: Moderate mix (50-70% stocks, 30-50% bonds/cash, 0-10% crypto)
+- **Dynamic**: Higher stocks (70-90%), lower bonds (10-30%), moderate crypto (0-15%)
+
+## Error Responses
+
+<ResponseField name="error" type="object">
+  <Expandable title="Error response structure">
+    <ResponseField name="success" type="boolean">
+      Always `false` for errors
+    </ResponseField>
+    
+    <ResponseField name="message" type="string">
+      Human-readable error message
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Common Errors
+
+- `400` - Invalid input data
+- `401` - Unauthorized (missing or invalid token)
+- `403` - Forbidden (no access to this account)
+- `503` - AI service unavailable

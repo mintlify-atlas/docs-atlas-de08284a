@@ -1,80 +1,341 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get up and running with Home Account in 5 minutes - from account creation to your first transaction
 ---
 
-## Get started in three steps
+This guide will walk you through creating your Home Account, setting up encryption, and importing your first transactions.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+- A modern web browser (Chrome, Firefox, Safari, or Edge)
+- An Excel or CSV file from your bank (optional, but recommended)
+- A secure password or OAuth account (Google/GitHub)
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+<Info>
+Home Account uses **end-to-end encryption**, which means your password is the key to your financial data. Choose a strong password and set up recovery mechanisms immediately.
+</Info>
+
+## Get Started
+
+<Steps>
+  <Step title="Create your account">
+    Navigate to the Home Account registration page and create your account. You have two options:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    **Option 1: Email and Password**
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    ```bash cURL
+    curl -X POST https://api.homeaccount.com/api/auth/register \
+      -H "Content-Type: application/json" \
+      -d '{
+        "email": "you@example.com",
+        "password": "your-secure-password",
+        "name": "Your Name"
+      }'
+    ```
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    <Accordion title="Response">
+    ```json
+    {
+      "success": true,
+      "message": "Registration successful. Please verify your email.",
+      "user": {
+        "id": "user-uuid",
+        "email": "you@example.com",
+        "name": "Your Name"
+      },
+      "key_salt": "hex-string",
+      "accountId": "account-uuid"
+    }
+    ```
+    </Accordion>
+    
+    **Option 2: OAuth (Google or GitHub)**
+    
+    Click "Continue with Google" or "Continue with GitHub". After OAuth authentication, you'll be redirected to set up a PIN for encryption.
+    
+    <Warning>
+    After registration, check your email for a verification link. You must verify your email before logging in.
+    </Warning>
+  </Step>
+  
+  <Step title="Set up encryption (first login)">
+    On your first login, your browser will derive encryption keys from your password:
+    
+    ```typescript
+    import { argon2id } from '@noble/hashes/argon2'
+    
+    // Derive User Key from password (happens automatically in browser)
+    const userKey = argon2id(
+      password, 
+      keySalt, 
+      { t: 3, m: 65536, p: 4, dkLen: 32 }
+    )
+    
+    // Decrypt Account Key with User Key
+    const accountKey = await decryptAccountKey(
+      encryptedAccountKey, 
+      userKey
+    )
+    ```
+    
+    <Note>
+    This process happens automatically in your browser. The server never sees your decrypted keys.
+    </Note>
+    
+    **If you used OAuth:** You'll be prompted to create a 6-8 digit PIN. This PIN replaces your password for encryption purposes. Learn more in the [OAuth + PIN guide](/security/oauth-pin).
+  </Step>
+  
+  <Step title="Set up recovery phrase (critical!)">
+    Immediately after login, you'll be redirected to set up a BIP39 recovery phrase:
+    
+    1. Click "Set up recovery" in the dashboard warning banner
+    2. Write down the 24-word recovery phrase on paper
+    3. Store it securely (safe deposit box, password manager, etc.)
+    4. Confirm the phrase by entering specific words
+    
+    <Warning>
+    **Without your recovery phrase, losing your password means permanent data loss.** The server cannot decrypt your data without your keys.
+    </Warning>
+    
+    The recovery phrase encrypts a copy of your Account Key and stores it in the database. If you forget your password, you can use these 24 words to regain access.
+    
+    See the [Password Recovery guide](/security/password-recovery) for more details.
+  </Step>
+  
+  <Step title="Create your first financial account">
+    Home Account separates "user accounts" (your login) from "financial accounts" (your bank accounts, wallets, etc.). Create your first financial account:
+    
+    1. Click "Create Account" in the sidebar
+    2. Enter a name (e.g., "Personal Checking", "Household Budget")
+    3. Click "Create"
+    
+    <Info>
+    You can create up to 3 financial accounts. Each account has its own encryption key and can be shared with family members via invitations.
+    </Info>
+    
+    Accounts are created with default categories automatically:
+    - ALIMENTACION (Food)
+    - TRANSPORTE (Transport)
+    - RESTAURANTES (Dining)
+    - SALUD (Health)
+    - HOGAR (Home)
+    - OCIO (Leisure)
+    - VEHICULO (Vehicle)
+    - ROPA (Clothing)
+    - INGRESOS (Income)
+    - TRANSFERENCIAS (Transfers)
+    - OTROS (Other)
+  </Step>
+  
+  <Step title="Import transactions from Excel (recommended)">
+    The fastest way to get started is to import transactions from your bank:
+    
+    1. Export transactions from your bank as Excel or CSV
+    2. Click "Import" in the sidebar
+    3. Upload your file
+    4. Preview the transactions and AI-suggested categories
+    5. Review and edit category mappings
+    6. Click "Confirm" to import
+    
+    **Supported formats:**
+    - Generic Excel (.xlsx, .xls)
+    - CSV with headers (date, description, amount)
+    - Specialized formats: "Control de Gastos", "Movimientos CC", "Revolut"
+    
+    **AI-powered categorization:**
+    
+    The system automatically suggests categories based on transaction descriptions:
+    
+    ```typescript
+    // Example: AI categorizes "MERCADONA SUPERMERCADO" as ALIMENTACION
+    POST /api/ai/categorize
+    {
+      "accountId": "account-uuid",
+      "transactions": [
+        {
+          "date": "2024-03-15",
+          "description": "MERCADONA SUPERMERCADO",
+          "amount": -45.32
+        }
+      ]
+    }
+    
+    Response:
+    {
+      "categorizedTransactions": [
+        {
+          "date": "2024-03-15",
+          "description": "MERCADONA SUPERMERCADO",
+          "amount": -45.32,
+          "suggestedCategory": "ALIMENTACION",
+          "confidence": 0.95
+        }
+      ]
+    }
+    ```
+    
+    <Accordion title="What happens during import?">
+    1. **File parsing**: The backend extracts transactions using the `xlsx` library
+    2. **AI categorization**: Descriptions are sent to the AI service (free after first parse)
+    3. **Client-side encryption**: Your browser encrypts descriptions and amounts
+    4. **Optimistic UI**: Transactions appear instantly with a loading indicator
+    5. **Server sync**: Backend validates and stores encrypted data
+    6. **Final update**: UI updates with server-confirmed data
+    </Accordion>
+    
+    See the [Excel Import guide](/guides/excel-import) for more details.
+  </Step>
+  
+  <Step title="Or add transactions manually">
+    If you don't have an Excel file, you can add transactions manually:
+    
+    1. Click "Add Transaction" in the sidebar
+    2. Fill in the form:
+       - **Date**: Transaction date
+       - **Description**: What was purchased
+       - **Amount**: Positive for income, negative for expenses
+       - **Category**: Select from dropdown
+       - **Subcategory** (optional): More specific categorization
+    3. Click "Save"
+    
+    The transaction is encrypted client-side before being sent to the server:
+    
+    ```typescript
+    import { encrypt } from '@/lib/crypto'
+    
+    const encryptedTransaction = {
+      account_id: accountId,
+      category_id: categoryId,
+      subcategory_id: subcategoryId || null,
+      description_encrypted: await encrypt(description, accountKey),
+      amount_encrypted: await encrypt(amount.toString(), accountKey),
+      amount_sign: amount >= 0 ? 'positive' : 'negative',
+      date: date.toISOString().split('T')[0]
+    }
+    
+    // Send to server
+    await fetch('/api/transactions', {
+      method: 'POST',
+      body: JSON.stringify(encryptedTransaction)
+    })
+    ```
+  </Step>
+  
+  <Step title="Set up budgets (optional)">
+    Track spending limits per category:
+    
+    1. Navigate to "Budgets" in the sidebar
+    2. Click "Create Budget"
+    3. Select a category
+    4. Enter the budget amount (in cents)
+    5. Choose the period (weekly, monthly, yearly)
+    6. Set an alert threshold (default: 80%)
+    7. Click "Save"
+    
+    **Visual progress tracking:**
+    - Green: Under budget
+    - Amber: At or above alert threshold (e.g., 80%)
+    - Red: Over budget
+    
+    <Note>
+    Budget spending is calculated client-side from decrypted transactions. The server only stores budget limits, not actual spending.
+    </Note>
+  </Step>
+  
+  <Step title="Explore investment features (optional)">
+    Home Account includes an AI-powered investment module:
+    
+    1. Navigate to "Investments" in the sidebar
+    2. Complete the **7-step risk profile questionnaire**:
+       - Age and income
+       - Job stability
+       - Emergency fund status
+       - Investment time horizon
+       - Risk reaction scenarios
+       - Investment experience
+    3. View **personalized recommendations** based on your profile
+    4. Chat with the **AI investment assistant** for questions
+    5. View **real-time market data** (BTC, ETH, EUR/USD, S&P 500, MSCI)
+    
+    <Warning>
+    Investment chats and risk profiles are **NOT end-to-end encrypted** yet. They're visible to the AI provider and stored in plain text.
+    </Warning>
+  </Step>
+  
+  <Step title="Understand the unlock flow">
+    After your first session, if you refresh the page or return later, you'll need to "unlock" your data:
+    
+    **For password users:**
+    1. You're redirected to `/unlock`
+    2. Enter your password
+    3. Browser derives User Key from password
+    4. Account Keys are decrypted
+    5. Dashboard loads with decrypted data
+    
+    **For OAuth + PIN users:**
+    1. You're already authenticated (cookies persist)
+    2. You're redirected to `/unlock`
+    3. Enter your PIN
+    4. Browser derives User Key from PIN
+    5. Account Keys are decrypted
+    6. Dashboard loads with decrypted data
+    
+    <Info>
+    Your session (JWT cookies) persists, but encryption keys are cleared on page refresh for security. The unlock flow re-derives your keys without re-authenticating.
+    </Info>
+  </Step>
+</Steps>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Excel Import" icon="file-excel" href="/guides/excel-import">
+    Learn advanced import features like AI categorization and bulk uploads
+  </Card>
+  <Card title="Security" icon="lock" href="/security/encryption">
+    Understand the envelope encryption model and security guarantees
+  </Card>
+  <Card title="Account Sharing" icon="users" href="/features/account-sharing">
+    Invite family members to share accounts securely
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth/login">
+    Explore the full REST API for building integrations
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Troubleshooting
+
+<Accordion title="I forgot my password and didn't set up recovery">
+Unfortunately, without a recovery phrase, your data is permanently lost. The end-to-end encryption model means the server cannot decrypt your data without your password.
+
+**Prevention:** Always set up your recovery phrase immediately after registration.
+</Accordion>
+
+<Accordion title="Import fails with 'Invalid file format'">
+The file parser supports Excel (.xlsx, .xls) and CSV formats. Ensure your file has these columns:
+- Date (YYYY-MM-DD or DD/MM/YYYY)
+- Description or Concept
+- Amount (decimal with . or , separator)
+
+If your bank uses a custom format, contact support to add it to the parser.
+</Accordion>
+
+<Accordion title="Transactions show as encrypted in the API response">
+This is expected! Transactions are stored encrypted. Your browser automatically decrypts them using your Account Key when displaying them. If you're using the API directly, you'll need to implement the decryption logic yourself.
+</Accordion>
+
+<Accordion title="'CSRF token mismatch' error">
+CSRF tokens are tied to your session. If you see this error:
+1. Log out and log back in
+2. Clear your browser cookies
+3. Try the operation again
+
+This usually happens if your session expired while the page was open.
+</Accordion>
+
+## Need Help?
+
+- **Installation**: See the [Self-Hosting Guide](/installation)
+- **Security**: Read the [Encryption Documentation](/security/encryption)
+- **Features**: Explore the [Core Features](/features/transactions)
+- **API**: Check the [API Reference](/api/auth/login)

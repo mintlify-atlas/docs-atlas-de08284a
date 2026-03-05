@@ -1,0 +1,217 @@
+---
+title: 'Register'
+api: 'POST /api/auth/register'
+description: 'Create a new user account'
+---
+
+Creates a new user account with email, password, and name. Sends a verification email to the provided email address. Users must verify their email before they can log in.
+
+## Request
+
+<ParamField body="email" type="string" required>
+  User's email address. Must be a valid email format and unique in the system.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  User's password. Must meet the following requirements:
+  - Minimum 6 characters
+  - At least one number
+  - At least one special character (non-alphanumeric)
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  User's display name. Must:
+  - Be at least 1 character
+  - Not exceed 100 characters
+  - Only contain letters (including accented characters) and spaces
+</ParamField>
+
+<ParamField body="accountName" type="string">
+  Optional name for the default account. Maximum 100 characters.
+</ParamField>
+
+<ParamField body="skipDefaultAccount" type="boolean">
+  If `true`, skips creation of the default account. Default is `false`.
+</ParamField>
+
+<ParamField body="encryptedAccountKey" type="string">
+  Optional encrypted account key for client-side encryption setup.
+</ParamField>
+
+<ParamField body="verificationBlob" type="string">
+  Optional encrypted verification blob for PIN validation.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Always `true` for successful registration.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Success message in Spanish: "Cuenta creada. Revisa tu email para verificar tu cuenta."
+</ResponseField>
+
+<ResponseField name="emailVerified" type="boolean">
+  Always `false` for new registrations. User must verify email.
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  Basic user information (no session tokens).
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      Unique user identifier.
+    </ResponseField>
+    <ResponseField name="email" type="string">
+      User's email address.
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      User's display name.
+    </ResponseField>
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp of account creation.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="key_salt" type="string">
+  Hex-encoded salt for client-side key derivation. Used for setting up encryption before email verification.
+</ResponseField>
+
+<ResponseField name="accountId" type="string | null">
+  ID of the default account if created. Null if `skipDefaultAccount` was `true`.
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X POST https://api.homeaccount.app/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "newuser@example.com",
+    "password": "SecurePass123!",
+    "name": "Jane Smith",
+    "accountName": "Personal Account"
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "message": "Cuenta creada. Revisa tu email para verificar tu cuenta.",
+  "emailVerified": false,
+  "user": {
+    "id": "usr_2b3c4d5e6f7g",
+    "email": "newuser@example.com",
+    "name": "Jane Smith",
+    "created_at": "2024-03-05T15:30:00.000Z"
+  },
+  "key_salt": "b2c3d4e5f6g7890...",
+  "accountId": "acc_1x2y3z4w5v6u"
+}
+```
+
+## Error Responses
+
+### 400 Bad Request - Validation Error
+
+```json
+{
+  "success": false,
+  "error": "La contraseña debe tener al menos 6 caracteres"
+}
+```
+
+Returned when validation fails. Common validation errors:
+- `"El email es requerido"`
+- `"Por favor ingresa un email válido"`
+- `"La contraseña debe tener al menos 6 caracteres"`
+- `"La contraseña debe contener al menos un número"`
+- `"La contraseña debe contener al menos un carácter especial"`
+- `"El nombre es requerido"`
+- `"El nombre solo puede contener letras y espacios"`
+- `"El nombre no puede tener más de 100 caracteres"`
+- `"El nombre de la cuenta es muy largo"`
+
+### 409 Conflict - Email Already Exists
+
+```json
+{
+  "success": false,
+  "error": "Email already registered"
+}
+```
+
+Returned when an account with the provided email already exists.
+
+### 429 Too Many Requests
+
+Returned when rate limit is exceeded. Registration endpoint has rate limiting protection.
+
+## Email Verification Flow
+
+1. User submits registration form
+2. Account is created with `email_verified: false`
+3. Verification email is sent with a unique token
+4. User must click the link in the email to verify
+5. Only after verification can the user log in
+
+<Note>
+  **Important**: No session tokens (accessToken, refreshToken) are returned during registration. Users cannot log in until they verify their email via the verification link sent to their inbox.
+</Note>
+
+## Encryption Setup
+
+The response includes `key_salt` and `accountId` to allow the frontend to:
+1. Derive encryption keys from the user's password
+2. Set up client-side encryption
+3. Redirect to the email verification page
+
+This happens **before** the user can log in, ensuring encryption is ready when they verify their email.
+
+## Implementation Details
+
+- **Rate Limiting**: Protected by both `registerRateLimiter` and `emailRateLimiter` middleware
+- **Password Hashing**: Uses bcrypt with configurable `SALT_ROUNDS`
+- **Validation**: Uses Zod schema (`registerSchema`) for type-safe validation
+- **Email Service**: Sends verification email asynchronously (non-blocking)
+- **Transaction Safety**: User creation is atomic
+- **Default Account**: Creates a default account unless `skipDefaultAccount: true`
+
+## Registration vs Login
+
+| Feature | Register | Login |
+|---------|----------|-------|
+| Email Verification Required | Creates unverified account | Must be verified to proceed |
+| Returns Session Tokens | No | Yes (as httpOnly cookies) |
+| Returns `key_salt` | Yes | Yes |
+| Returns CSRF Token | No | Yes |
+| Creates Default Account | Yes (optional) | No |
+
+## Security Considerations
+
+1. **Email Uniqueness**: Prevents duplicate accounts
+2. **Password Strength**: Enforces minimum security requirements
+3. **Rate Limiting**: Prevents automated account creation
+4. **Email Verification**: Prevents fake or mistyped email addresses
+5. **No Session Tokens**: Users can't access API until email is verified
+6. **Async Email**: Registration doesn't fail if email service is down
+
+## Next Steps After Registration
+
+1. User receives success response
+2. Frontend completes encryption setup using `key_salt`
+3. User is redirected to "Check your email" page
+4. User clicks verification link in email
+5. Email is verified via `GET /api/auth/verify-email`
+6. User can now log in
+
+## Source Code
+
+Controller: `backend/controllers/auth/auth-controller.ts:49`
+
+Route: `backend/routes/auth/auth-routes.ts:46`
+
+Validator: `backend/validators/auth-validators.ts:8`

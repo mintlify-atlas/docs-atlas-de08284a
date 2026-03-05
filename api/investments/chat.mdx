@@ -1,0 +1,412 @@
+---
+title: 'Investment Chat'
+---
+
+Conversational AI chat system for investment-related questions. Maintains context across messages within a session and provides personalized responses based on the user's financial situation.
+
+## Chat Sessions
+
+### Create Chat Session
+
+<Card title="POST /api/investment/:accountId/chat/session" icon="plus">
+  Creates a new chat session for investment conversations.
+</Card>
+
+#### Path Parameters
+
+<ParamField path="accountId" type="string" required>
+  The unique identifier of the account
+</ParamField>
+
+#### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="data properties">
+    <ResponseField name="sessionId" type="string">
+      Unique identifier for the chat session
+    </ResponseField>
+    
+    <ResponseField name="provider" type="string">
+      AI provider being used (e.g., "openai", "anthropic", "google")
+    </ResponseField>
+    
+    <ResponseField name="createdAt" type="string">
+      ISO 8601 timestamp of when the session was created
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X POST 'https://api.example.com/api/investment/acc_123/chat/session' \
+  -H 'Authorization: Bearer YOUR_TOKEN'
+```
+
+#### Example Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "sessionId": "sess_abc123xyz",
+    "provider": "openai",
+    "createdAt": "2026-03-05T10:30:00.000Z"
+  }
+}
+```
+
+---
+
+### Send Chat Message
+
+<Card title="POST /api/investment/:accountId/chat/:sessionId/message" icon="message">
+  Sends a message to the AI and receives a contextual response.
+</Card>
+
+<Info>
+This endpoint uses AI and counts as 1 AI request per message toward your rate limit.
+</Info>
+
+#### Path Parameters
+
+<ParamField path="accountId" type="string" required>
+  The unique identifier of the account
+</ParamField>
+
+<ParamField path="sessionId" type="string" required>
+  The chat session identifier
+</ParamField>
+
+#### Request Body
+
+<ParamField body="message" type="string" required>
+  The user's message (minimum 2 characters after trimming, maximum 5,000 characters)
+</ParamField>
+
+#### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="data properties">
+    <ResponseField name="reply" type="string">
+      AI-generated response to the user's message
+    </ResponseField>
+    
+    <ResponseField name="relatedConcepts" type="array">
+      Array of related investment concepts the user might want to explore
+    </ResponseField>
+    
+    <ResponseField name="needsDisclaimer" type="boolean">
+      Whether a financial advice disclaimer should be shown to the user
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X POST 'https://api.example.com/api/investment/acc_123/chat/sess_abc123/message' \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "message": "Should I invest more in ETFs or individual stocks?"
+  }'
+```
+
+#### Example Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "reply": "For most investors, especially those with a balanced profile like yours, ETFs are generally a better choice. They provide instant diversification, lower risk, and typically have lower fees than buying individual stocks. With your monthly investment of €500, ETFs allow you to spread that across hundreds of companies rather than concentrating risk in just a few stocks. Individual stocks require more research, monitoring, and carry higher risk. I'd recommend allocating 80-90% to diversified ETFs and only 10-20% to individual stocks if you want to learn and have specific companies you believe in.",
+    "relatedConcepts": [
+      "ETF expense ratios",
+      "Diversification strategies",
+      "Stock picking vs index investing",
+      "Risk management"
+    ],
+    "needsDisclaimer": true
+  }
+}
+```
+
+#### Security Features
+
+Messages are processed through security checks:
+- Input sanitization to prevent injection attacks
+- Content filtering for inappropriate requests
+- Output validation to ensure safe responses
+
+If a message fails security checks, the endpoint returns a `400` error with details.
+
+---
+
+### Get Chat History
+
+<Card title="GET /api/investment/:accountId/chat/:sessionId/history" icon="clock-rotate-left">
+  Retrieves all messages from a chat session.
+</Card>
+
+#### Path Parameters
+
+<ParamField path="accountId" type="string" required>
+  The unique identifier of the account
+</ParamField>
+
+<ParamField path="sessionId" type="string" required>
+  The chat session identifier
+</ParamField>
+
+#### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="data properties">
+    <ResponseField name="sessionId" type="string">
+      The chat session identifier
+    </ResponseField>
+    
+    <ResponseField name="messages" type="array">
+      Array of chat messages in chronological order
+      
+      <Expandable title="message properties">
+        <ResponseField name="role" type="string">
+          Message sender role
+          
+          Values: `user`, `assistant`
+        </ResponseField>
+        
+        <ResponseField name="content" type="string">
+          The message content
+        </ResponseField>
+        
+        <ResponseField name="createdAt" type="string">
+          ISO 8601 timestamp of when the message was sent
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="messageCount" type="number">
+      Total number of messages in the session
+    </ResponseField>
+    
+    <ResponseField name="createdAt" type="string">
+      ISO 8601 timestamp of when the session was created
+    </ResponseField>
+    
+    <ResponseField name="lastMessageAt" type="string">
+      ISO 8601 timestamp of the most recent message
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X GET 'https://api.example.com/api/investment/acc_123/chat/sess_abc123/history' \
+  -H 'Authorization: Bearer YOUR_TOKEN'
+```
+
+#### Example Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "sessionId": "sess_abc123xyz",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is dollar-cost averaging?",
+        "createdAt": "2026-03-05T10:35:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "content": "Dollar-cost averaging (DCA) is an investment strategy where you invest a fixed amount of money at regular intervals, regardless of market conditions. For example, investing €500 every month into an ETF. This approach reduces the impact of market volatility and removes the need to time the market.",
+        "createdAt": "2026-03-05T10:35:02.000Z"
+      },
+      {
+        "role": "user",
+        "content": "Should I invest more in ETFs or individual stocks?",
+        "createdAt": "2026-03-05T10:40:00.000Z"
+      },
+      {
+        "role": "assistant",
+        "content": "For most investors, especially those with a balanced profile like yours, ETFs are generally a better choice...",
+        "createdAt": "2026-03-05T10:40:03.000Z"
+      }
+    ],
+    "messageCount": 4,
+    "createdAt": "2026-03-05T10:30:00.000Z",
+    "lastMessageAt": "2026-03-05T10:40:03.000Z"
+  }
+}
+```
+
+---
+
+### Get All Chat Sessions
+
+<Card title="GET /api/investment/:accountId/chat/sessions" icon="list">
+  Lists all chat sessions for an account.
+</Card>
+
+#### Path Parameters
+
+<ParamField path="accountId" type="string" required>
+  The unique identifier of the account
+</ParamField>
+
+#### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of chat session summaries
+  
+  <Expandable title="session properties">
+    <ResponseField name="sessionId" type="string">
+      Unique identifier for the session
+    </ResponseField>
+    
+    <ResponseField name="provider" type="string">
+      AI provider used for the session
+    </ResponseField>
+    
+    <ResponseField name="messageCount" type="number">
+      Total number of messages in the session
+    </ResponseField>
+    
+    <ResponseField name="createdAt" type="string">
+      ISO 8601 timestamp of session creation
+    </ResponseField>
+    
+    <ResponseField name="lastMessageAt" type="string">
+      ISO 8601 timestamp of the most recent message
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X GET 'https://api.example.com/api/investment/acc_123/chat/sessions' \
+  -H 'Authorization: Bearer YOUR_TOKEN'
+```
+
+#### Example Response
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "sessionId": "sess_abc123xyz",
+      "provider": "openai",
+      "messageCount": 8,
+      "createdAt": "2026-03-05T10:30:00.000Z",
+      "lastMessageAt": "2026-03-05T11:15:00.000Z"
+    },
+    {
+      "sessionId": "sess_def456uvw",
+      "provider": "openai",
+      "messageCount": 3,
+      "createdAt": "2026-03-04T14:20:00.000Z",
+      "lastMessageAt": "2026-03-04T14:25:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### Delete Chat Session
+
+<Card title="DELETE /api/investment/:accountId/chat/:sessionId" icon="trash">
+  Deletes a chat session and all its messages.
+</Card>
+
+#### Path Parameters
+
+<ParamField path="accountId" type="string" required>
+  The unique identifier of the account
+</ParamField>
+
+<ParamField path="sessionId" type="string" required>
+  The chat session identifier to delete
+</ParamField>
+
+#### Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Confirmation message
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X DELETE 'https://api.example.com/api/investment/acc_123/chat/sess_abc123' \
+  -H 'Authorization: Bearer YOUR_TOKEN'
+```
+
+#### Example Response
+
+```json
+{
+  "success": true,
+  "message": "Sesión eliminada correctamente"
+}
+```
+
+---
+
+## AI Context Integration
+
+The chat system provides the AI with rich context including:
+
+- **Financial Summary**: Monthly income, savings capacity, savings rate, emergency fund status, and financial trends
+- **Investment Profile**: User's risk profile (conservative/balanced/dynamic) if available
+- **Market Data**: Real-time prices for S&P 500, MSCI World, Nasdaq, Bitcoin, Ethereum, and currency rates
+- **Conversation History**: Last 20 messages for continuity
+
+This allows the AI to give personalized, contextually-aware responses about:
+- Investment strategies tailored to the user's situation
+- Risk-appropriate recommendations
+- Market timing considerations
+- Portfolio allocation advice
+- Educational content at the appropriate level
+
+## Session Management
+
+Sessions automatically expire after 30 minutes of inactivity. When a user sends a message:
+- If the session is expired, a new session is automatically created
+- If the session is active, the message is added to the existing conversation
+- Session history is maintained in the database
+
+## Error Responses
+
+### Common Errors
+
+- `400` - Invalid message (too short, too long, or failed security check)
+- `401` - Unauthorized (missing or invalid token)
+- `403` - Forbidden (no access to this account)
+- `404` - Session not found
+- `503` - AI service unavailable

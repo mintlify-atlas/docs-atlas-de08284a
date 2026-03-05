@@ -1,0 +1,152 @@
+---
+title: 'Create Category'
+description: 'Create a new category for organizing transactions'
+---
+
+## Endpoint
+
+```
+POST /api/categories
+```
+
+Creates a new category within a specific account. Categories are used to organize and classify transactions.
+
+## Authentication
+
+This endpoint requires authentication via Bearer token and CSRF protection.
+
+## Request Body
+
+<ParamField body="account_id" type="string" required>
+  The UUID of the account where the category will be created. Must be a valid UUID format.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  The category name. Must be between 3 and 23 characters.
+</ParamField>
+
+<ParamField body="name_encrypted" type="string">
+  Optional encrypted version of the category name for end-to-end encryption.
+</ParamField>
+
+<ParamField body="color" type="string">
+  Hex color code for the category (e.g., `#6B7280`). Must be a valid 6-digit hex color. Defaults to `#6B7280` if not provided.
+</ParamField>
+
+<ParamField body="icon" type="string">
+  Optional icon identifier for the category. Maximum 50 characters.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the request was successful.
+</ResponseField>
+
+<ResponseField name="category" type="object">
+  The created category object.
+  
+  <Expandable title="Category Object">
+    <ResponseField name="id" type="string">
+      The unique UUID of the category.
+    </ResponseField>
+    
+    <ResponseField name="account_id" type="string">
+      The UUID of the account this category belongs to.
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      The sanitized category name.
+    </ResponseField>
+    
+    <ResponseField name="name_encrypted" type="string">
+      The encrypted category name, if provided.
+    </ResponseField>
+    
+    <ResponseField name="color" type="string">
+      The hex color code for the category.
+    </ResponseField>
+    
+    <ResponseField name="icon" type="string | null">
+      The icon identifier, or null if not set.
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp of when the category was created.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X POST https://api.yourapp.com/api/categories \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: YOUR_CSRF_TOKEN" \
+  -d '{
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "name": "Groceries",
+    "color": "#10B981",
+    "icon": "shopping-cart"
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "category": {
+    "id": "987fcdeb-51a2-43e7-9abc-123456789def",
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "name": "Groceries",
+    "name_encrypted": null,
+    "color": "#10B981",
+    "icon": "shopping-cart",
+    "created_at": "2026-03-05T10:30:00.000Z"
+  }
+}
+```
+
+## Error Responses
+
+<ResponseField name="400" type="error">
+  Bad Request - Invalid input data.
+  
+  ```json
+  {
+    "success": false,
+    "message": "El nombre debe tener al menos 3 caracteres"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="403" type="error">
+  Forbidden - User does not have access to the specified account.
+  
+  ```json
+  {
+    "success": false,
+    "message": "You do not have access to this account"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="409" type="error">
+  Conflict - Category with this name already exists.
+  
+  ```json
+  {
+    "success": false,
+    "message": "Category with this name already exists"
+  }
+  ```
+</ResponseField>
+
+## Notes
+
+- The `name` field is automatically sanitized for storage
+- If `color` is not provided, it defaults to `#6B7280` (gray)
+- The user must have access to the specified account
+- Category names must be unique within an account

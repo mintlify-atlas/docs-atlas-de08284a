@@ -1,0 +1,419 @@
+---
+title: 'Excel Import Guide'
+description: 'Import hundreds of transactions from Excel or CSV files with AI-powered category suggestions'
+icon: 'file-spreadsheet'
+---
+
+Home Account supports importing transactions in bulk from Excel and CSV files exported by your bank. The import flow includes smart category detection, AI-powered suggestions, and optimistic UI updates for a seamless experience.
+
+## Supported File Formats
+
+The import parser automatically detects and handles multiple file formats:
+
+- **Excel files** (.xlsx, .xls)
+- **CSV files** (.csv) with automatic delimiter detection (comma, semicolon, tab)
+- **Specialized formats**: Control de Gastos, Movimientos CC, Revolut CSV
+- **Generic formats**: Any Excel/CSV with date, description, and amount columns
+- **AI-powered parsing**: When standard parsing fails, AI can extract transactions from any text format
+
+<Info>
+Maximum file size: 5MB. Files can contain thousands of transactions.
+</Info>
+
+## Import Process
+
+<Steps>
+  <Step title="Upload File">
+    Select your bank statement file. The parser will automatically detect the format and extract transactions.
+
+    ```typescript
+    // Frontend: File upload handler
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const selectedFile = e.target.files?.[0]
+      if (!selectedFile) return
+
+      const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
+      if (selectedFile.size > MAX_FILE_SIZE) {
+        setError('El archivo supera el tamaño máximo permitido (5MB)')
+        return
+      }
+
+      setFile(selectedFile)
+      setIsLoading(true)
+
+      try {
+        const result = await importApi.parse(selectedFile)
+
+        if (!result.success || !result.data.success) {
+          // Fallback to AI parsing if standard parsing fails
+          if (aiAvailable) {
+            const aiResult = await parseWithAI(selectedFile)
+            if (aiResult && aiResult.transactions.length > 0) {
+              setParseResult(aiResult)
+              setStep('preview')
+              return
+            }
+          }
+          setError(result.data?.errors?.[0] || 'Error al procesar archivo')
+          return
+        }
+
+        setParseResult(result.data)
+        setStep('preview')
+      } catch (err: any) {
+        setError(err.message)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Preview Transactions">
+    Review the parsed transactions before importing. The preview shows:
+    - Transaction date
+    - Description
+    - Bank category (if present)
+    - Amount (color-coded: green for income, red for expenses)
+
+    ```typescript
+    interface ParsedTransaction {
+      date: string              // ISO format: YYYY-MM-DD
+      description: string       // Sanitized description
+      amount: number           // Positive for income, negative for expenses
+      bank_category: string | null
+      bank_subcategory: string | null
+    }
+    ```
+  </Step>
+
+  <Step title="Map Categories">
+    The system intelligently maps bank categories to your app categories using:
+
+    ### 1. Saved Mappings (Highest Priority)
+    Reuses mappings from previous imports for the same bank categories.
+
+    ```typescript
+    // Backend: Retrieve saved mappings
+    const [result] = await db.query<any[]>(
+      `SELECT bank_category, bank_subcategory, subcategory_id
+       FROM category_mappings
+       WHERE account_id = ?`,
+      [account_id]
+    )
+    ```
+
+    ### 2. AI-Powered Suggestions
+    When AI is enabled, the system suggests categories based on transaction descriptions.
+
+    ```typescript
+    // AI provider can parse transactions and suggest categories
+    const result = await ai.parseTransactions(fileContent)
+    // Returns: { transactions: [{ date, description, amount, category, subcategory }] }
+    ```
+
+    ### 3. Keyword-Based Matching
+    Falls back to keyword detection for common patterns.
+
+    ```typescript
+    const KEYWORD_MAPPINGS = [
+      {
+        keywords: ['supermercado', 'mercadona', 'carrefour', 'lidl'],
+        category: 'supermercado',
+        subcategory: 'alimentacion'
+      },
+      {
+        keywords: ['gasolina', 'combustible', 'repsol', 'cepsa'],
+        category: 'transporte',
+        subcategory: 'combustible'
+      },
+      // ... 40+ more mappings
+    ]
+    ```
+
+    <Note>
+    Mappings are automatically saved for future imports, making subsequent imports faster.
+    </Note>
+  </Step>
+
+  <Step title="Confirm Import">
+    The backend processes transactions in batches with automatic deduplication.
+
+    ```typescript
+    // Backend: Batch import with deduplication
+    const BATCH_SIZE = 100
+    let inserted = 0
+    let skipped = 0
+
+    // Get existing import hashes to prevent duplicates
+    const existingHashQuery = await db.query<any[]>(
+      `SELECT import_hash FROM transactions 
+       WHERE account_id = ? AND import_hash IS NOT NULL`,
+      [account_id]
+    )
+    const existingHashes = new Set(existingHashQuery[0].map(row => row.import_hash))
+
+    for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
+      const batch = transactions.slice(i, i + BATCH_SIZE)
+      const values: any[] = []
+      const placeholders: string[] = []
+
+      for (const tx of batch) {
+        const importHash = tx.import_hash || null
+        
+        // Skip duplicates
+        if (importHash && existingHashes.has(importHash)) {
+          skipped++
+          continue
+        }
+
+        const id = crypto.randomUUID()
+        const subcategoryId = mappingLookup.get(
+          `${tx.bank_category}|${tx.bank_subcategory}`
+        ) || null
+
+        placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        values.push(
+          id, account_id, subcategoryId, tx.date,
+          tx.description, tx.amount,
+          null, null, null, null, null,
+          tx.bank_category, importHash
+        )
+      }
+
+      if (placeholders.length > 0) {
+        await db.query(
+          `INSERT INTO transactions (id, account_id, subcategory_id, date, 
+            description, amount, description_encrypted, amount_encrypted, 
+            amount_sign, bank_category_encrypted, bank_subcategory_encrypted, 
+            bank_category, import_hash)
+           VALUES ${placeholders.join(', ')}`,
+          values
+        )
+        inserted += placeholders.length
+      }
+    }
+    ```
+
+    <Info>
+    **Optimistic UI**: The frontend immediately shows transactions in the list before the server confirms, then reconciles any conflicts.
+    </Info>
+  </Step>
+</Steps>
+
+## Deduplication Strategy
+
+To prevent duplicate imports, the system uses import hashes:
+
+```typescript
+// Client-side: Generate hash from plaintext before encryption
+const importHash = crypto.createHash('sha256')
+  .update(`${tx.date}|${tx.description}|${tx.amount}`)
+  .digest('hex')
+
+// Server-side: Check existing hashes
+if (existingHashes.has(importHash)) {
+  skipped++
+  continue
+}
+```
+
+<Warning>
+Import hashes are computed from plaintext transaction data. If you re-import the same file, transactions with matching date, description, and amount will be skipped.
+</Warning>
+
+## Excel Format Detection
+
+The parser automatically detects file types by analyzing headers and structure:
+
+```typescript
+// Backend: excel-parser.ts
+function detectFileType(workbook: XLSX.WorkBook): FileType {
+  // Check for Control de Gastos (has month sheets)
+  const monthSheets = ['Enero', 'Febrero', 'Marzo', ...]
+  if (workbook.SheetNames.some(name => monthSheets.includes(name.trim()))) {
+    return 'control_gastos'
+  }
+
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+  const data = XLSX.utils.sheet_to_json(firstSheet, { header: 1 })
+
+  // Check for Movimientos CC (has F. VALOR column)
+  for (let i = 0; i < Math.min(10, data.length); i++) {
+    const row = data[i]
+    if (row?.some(cell => 
+      typeof cell === 'string' && cell.toUpperCase().includes('F. VALOR')
+    )) {
+      return 'movimientos_cc'
+    }
+  }
+
+  // Check for generic Excel with date + amount columns
+  const dateKeywords = ['fecha', 'date', 'valor fecha', 'f.valor']
+  const amountKeywords = ['importe', 'amount', 'cantidad', 'monto']
+  // ... detection logic
+
+  return 'generic_excel'
+}
+```
+
+## CSV Delimiter Detection
+
+The parser automatically detects CSV delimiters (comma, semicolon, or tab):
+
+```typescript
+function detectDelimiter(content: string): ',' | ';' | '\t' {
+  const firstLine = content.split(/\r?\n/)[0]
+  const delimiters = [',', ';', '\t'] as const
+  
+  const counts = delimiters.map(d => ({
+    delimiter: d,
+    count: (firstLine.match(new RegExp(d === '\t' ? '\t' : `\\${d}`, 'g')) || []).length
+  }))
+
+  const best = counts.sort((a, b) => b.count - a.count)[0]
+  return best.delimiter
+}
+```
+
+## Error Handling
+
+The import process includes comprehensive error handling:
+
+```typescript
+// Frontend: User-friendly error messages
+function getFriendlyErrorMessage(error: string): string {
+  const errorMap: Record<string, string> = {
+    'Solo se permiten archivos Excel (.xls, .xlsx) o CSV (.csv)':
+      'El formato del archivo no es soportado. Usa archivos Excel (.xls, .xlsx) o CSV (.csv)',
+    'El archivo supera el tamaño máximo permitido (5MB)':
+      'El archivo es demasiado grande. El tamaño máximo es 5MB',
+    'Error al procesar el archivo': 
+      'No se pudo leer el archivo. Asegúrate de que no está dañado',
+    // ... more mappings
+  }
+
+  for (const [key, value] of Object.entries(errorMap)) {
+    if (error.includes(key)) return value
+  }
+  return error || 'Ha ocurrido un error inesperado'
+}
+```
+
+## Security: CSV Injection Prevention
+
+All imported data is sanitized to prevent CSV injection attacks:
+
+```typescript
+// Backend: utils/sanitize.js
+export function sanitizeCSVValue(value: string): string {
+  if (!value) return ''
+  
+  // Remove dangerous CSV injection prefixes
+  let sanitized = value.toString().trim()
+  const dangerousStarts = ['=', '+', '-', '@', '\t', '\r']
+  
+  while (dangerousStarts.some(prefix => sanitized.startsWith(prefix))) {
+    sanitized = sanitized.substring(1).trim()
+  }
+  
+  // Remove control characters and XSS patterns
+  sanitized = sanitized.replace(/[\x00-\x1F\x7F]/g, '')
+  
+  return sanitized
+}
+```
+
+## Encrypted Accounts Support
+
+The import system supports end-to-end encrypted accounts:
+
+```typescript
+const isEncrypted = transactions.length > 0 && !!(transactions[0] as any).description_encrypted
+
+if (isEncrypted) {
+  // Store encrypted fields
+  placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  values.push(
+    id, account_id, subcategoryId, tx.date,
+    null, null,  // Plaintext fields are null
+    txAny.description_encrypted,
+    txAny.amount_encrypted,
+    txAny.amount_sign,  // Sign stored separately for filtering
+    txAny.bank_category_encrypted,
+    txAny.bank_subcategory_encrypted,
+    tx.bank_category,  // Hash for deduplication
+    importHash
+  )
+}
+```
+
+<Note>
+For encrypted accounts, the import hash is still computed from plaintext data before encryption to enable deduplication.
+</Note>
+
+## Category Mapping Persistence
+
+Mappings are saved for future imports to speed up the process:
+
+```typescript
+// Backend: Save mappings after successful import
+if (category_mappings && category_mappings.length > 0) {
+  const validMappings = category_mappings.filter(m => m.subcategory_id)
+  
+  if (validMappings.length > 0) {
+    const mappingPlaceholders: string[] = []
+    const mappingValues: any[] = []
+
+    for (const mapping of validMappings) {
+      mappingPlaceholders.push('(UUID(), ?, ?, ?, ?)')
+      mappingValues.push(
+        account_id,
+        mapping.bank_category,
+        mapping.bank_subcategory,
+        mapping.subcategory_id
+      )
+    }
+
+    await db.query(
+      `INSERT INTO category_mappings 
+        (id, account_id, bank_category, bank_subcategory, subcategory_id)
+       VALUES ${mappingPlaceholders.join(', ')}
+       ON DUPLICATE KEY UPDATE 
+         subcategory_id = VALUES(subcategory_id), 
+         updated_at = CURRENT_TIMESTAMP`,
+      mappingValues
+    )
+  }
+}
+```
+
+## Best Practices
+
+<Accordion title="Preparing Your Excel File">
+  - Ensure your file has a header row with column names
+  - Use consistent date formats (YYYY-MM-DD, DD/MM/YYYY, or DD-MM-YYYY)
+  - Include at minimum: date, description, and amount columns
+  - Optional: category and subcategory columns for better mapping
+</Accordion>
+
+<Accordion title="CSV Export Settings">
+  - Use UTF-8 encoding to preserve special characters
+  - Include column headers in the first row
+  - The parser supports comma, semicolon, and tab delimiters
+  - Quoted fields are properly handled
+</Accordion>
+
+<Accordion title="Handling Large Files">
+  - Files are processed in batches of 100 transactions
+  - Consider splitting files larger than 10,000 transactions
+  - The preview shows only the first 100 rows, but all will be imported
+</Accordion>
+
+<Accordion title="Troubleshooting Failed Imports">
+  1. Check the file format matches supported types
+  2. Verify all required columns are present
+  3. Check for special characters or encoding issues
+  4. Try the AI parsing fallback (if enabled)
+  5. Review error messages for specific column issues
+</Accordion>

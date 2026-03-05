@@ -1,0 +1,609 @@
+---
+title: 'Categories'
+description: 'Organize transactions with categories and subcategories, featuring color coding and encryption support'
+---
+
+## Overview
+
+Categories and subcategories provide a hierarchical system for organizing transactions. Each category can have multiple subcategories, and both support **end-to-end encryption** for category names while keeping colors and icons unencrypted for UI purposes.
+
+<Info>
+  Categories support both encrypted and unencrypted names during the migration period. The system automatically handles encryption when an account is unlocked.
+</Info>
+
+## Category Structure
+
+Categories and subcategories have distinct but related structures:
+
+```typescript backend/models/categories/index.ts
+export interface Category {
+  id: string
+  account_id: string
+  name: string
+  color: string
+  icon: string | null
+  created_at: Date
+  updated_at?: Date
+  subcategories?: Subcategory[]
+  // Encrypted fields (optional during transition)
+  name_encrypted?: string
+}
+
+export interface Subcategory {
+  id: string
+  category_id: string
+  name: string
+  created_at: Date
+  updated_at?: Date
+  // Encrypted fields (optional during transition)
+  name_encrypted?: string
+}
+```
+
+### Category Fields
+
+- **name**: Display name (can be encrypted)
+- **color**: Hex color code for visual identification (not encrypted)
+- **icon**: Optional icon identifier (not encrypted)
+- **subcategories**: Child subcategories belonging to this category
+
+## Creating Categories
+
+### Client-Side: Category Creation
+
+```typescript frontend/lib/api/categories.ts
+import { encrypt } from '../crypto'
+import { useCryptoStore } from '@/stores/cryptoStore'
+
+// Usage in a component
+const createCategory = async (accountId: string, name: string, color: string) => {
+  const accountKey = useCryptoStore.getState().getAccountKey(accountId)
+  
+  if (accountKey) {
+    // Encrypt category name
+    const name_encrypted = await encrypt(name, accountKey)
+    
+    return api.post('/categories', {
+      account_id: accountId,
+      name: name, // Plaintext for backward compatibility
+      name_encrypted,
+      color,
+      icon: null,
+    })
+  }
+  
+  // Fallback: unencrypted
+  return api.post('/categories', {
+    account_id: accountId,
+    name,
+    color,
+    icon: null,
+  })
+}
+```
+
+### Server-Side: Category Controller
+
+```typescript backend/controllers/categories/category-controller.ts
+export const createCategory = asyncHandler(async (req: Request, res: Response) => {
+  const result = createCategorySchema.safeParse(req.body)
+  
+  if (!result.success) {
+    const messages = result.error.issues.map(i => i.message).join(', ')
+    throw new AppError(messages, 400)
+  }
+
+  const { account_id, name, name_encrypted, color, icon } = result.data
+
+  const safeName = sanitizeForStorage(name)
+
+  const category = await CategoryRepository.create(req.user!.id, {
+    account_id,
+    name: safeName,
+    name_encrypted,
+    color,
+    icon,
+  })
+
+  res.status(201).json({
+    success: true,
+    category,
+  })
+})
+```
+
+### API Endpoint
+
+```http
+POST /api/categories
+Content-Type: application/json
+X-CSRF-Token: <token>
+
+{
+  "account_id": "uuid",
+  "name": "Groceries",
+  "name_encrypted": "base64-encrypted-data",
+  "color": "#10B981",
+  "icon": "shopping-cart"
+}
+```
+
+## Creating Subcategories
+
+### Subcategory Controller
+
+```typescript backend/controllers/subcategories/subcategory-controller.ts
+export const createSubcategory = asyncHandler(async (req: Request, res: Response) => {
+  const result = createSubcategorySchema.safeParse(req.body)
+  
+  if (!result.success) {
+    const messages = result.error.issues.map(i => i.message).join(', ')
+    throw new AppError(messages, 400)
+  }
+
+  const { category_id, name, name_encrypted } = result.data
+
+  const safeName = sanitizeForStorage(name)
+
+  const subcategory = await SubcategoryRepository.create(req.user!.id, {
+    category_id,
+    name: safeName,
+    name_encrypted,
+  })
+
+  res.status(201).json({
+    success: true,
+    subcategory,
+  })
+})
+```
+
+### API Endpoint
+
+```http
+POST /api/subcategories
+Content-Type: application/json
+X-CSRF-Token: <token>
+
+{
+  "category_id": "uuid",
+  "name": "Supermarket",
+  "name_encrypted": "base64-encrypted-data"
+}
+```
+
+## Viewing Categories
+
+### Get All Categories for an Account
+
+```typescript backend/controllers/categories/category-controller.ts
+export const getCategories = asyncHandler(async (req: Request, res: Response) => {
+  const { account_id } = req.query
+
+  if (!account_id || typeof account_id !== 'string') {
+    throw new AppError('account_id es requerido', 400)
+  }
+
+  const categories = await CategoryRepository.getByAccountId(account_id, req.user!.id)
+
+  res.status(200).json({
+    success: true,
+    categories,
+  })
+})
+```
+
+### Get Single Category
+
+```typescript backend/controllers/categories/category-controller.ts
+export const getCategoryById = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const category = await CategoryRepository.getById(id, req.user!.id)
+
+  if (!category) {
+    throw new AppError('Categoría no encontrada', 404)
+  }
+
+  res.status(200).json({
+    success: true,
+    category,
+  })
+})
+```
+
+### Get Subcategories for a Category
+
+```typescript backend/controllers/subcategories/subcategory-controller.ts
+export const getSubcategories = asyncHandler(async (req: Request, res: Response) => {
+  const { category_id } = req.query
+
+  if (!category_id || typeof category_id !== 'string') {
+    throw new AppError('category_id es requerido', 400)
+  }
+
+  const subcategories = await SubcategoryRepository.getByCategoryId(category_id, req.user!.id)
+
+  res.status(200).json({
+    success: true,
+    subcategories,
+  })
+})
+```
+
+## Updating Categories
+
+### Update Category
+
+```typescript backend/controllers/categories/category-controller.ts
+export const updateCategory = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+
+  const result = updateCategorySchema.safeParse(req.body)
+  
+  if (!result.success) {
+    const messages = result.error.issues.map(i => i.message).join(', ')
+    throw new AppError(messages, 400)
+  }
+
+  const { name, name_encrypted, color, icon } = result.data
+
+  const safeName = name ? sanitizeForStorage(name) : undefined
+
+  const category = await CategoryRepository.update(id, req.user!.id, {
+    name: safeName,
+    name_encrypted,
+    color,
+    icon,
+  })
+
+  if (!category) {
+    throw new AppError('Categoría no encontrada', 404)
+  }
+
+  res.status(200).json({
+    success: true,
+    category,
+  })
+})
+```
+
+### Update Subcategory
+
+```typescript backend/controllers/subcategories/subcategory-controller.ts
+export const updateSubcategory = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+
+  const result = updateSubcategorySchema.safeParse(req.body)
+  
+  if (!result.success) {
+    const messages = result.error.issues.map(i => i.message).join(', ')
+    throw new AppError(messages, 400)
+  }
+
+  const { name, name_encrypted } = result.data
+
+  const safeName = name ? sanitizeForStorage(name) : undefined
+
+  const subcategory = await SubcategoryRepository.update(id, req.user!.id, {
+    name: safeName,
+    name_encrypted,
+  })
+
+  if (!subcategory) {
+    throw new AppError('Subcategoría no encontrada', 404)
+  }
+
+  res.status(200).json({
+    success: true,
+    subcategory,
+  })
+})
+```
+
+## Deleting Categories
+
+### Delete Category
+
+```typescript backend/controllers/categories/category-controller.ts
+export const deleteCategory = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const deleted = await CategoryRepository.delete(id, req.user!.id)
+
+  if (!deleted) {
+    throw new AppError('Categoría no encontrada', 404)
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Categoría eliminada correctamente',
+  })
+})
+```
+
+### Delete Subcategory
+
+```typescript backend/controllers/subcategories/subcategory-controller.ts
+export const deleteSubcategory = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const deleted = await SubcategoryRepository.delete(id, req.user!.id)
+
+  if (!deleted) {
+    throw new AppError('Subcategoría no encontrada', 404)
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Subcategoría eliminada correctamente',
+  })
+})
+```
+
+<Warning>
+  Deleting a category will affect all transactions assigned to that category. Consider reassigning transactions before deletion.
+</Warning>
+
+## Managing Orphaned Transactions
+
+When deleting categories, you can check for and reassign orphaned transactions:
+
+### Check Orphaned Count
+
+```typescript backend/controllers/categories/category-controller.ts
+export const getOrphanedCount = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+
+  const count = await CategoryRepository.getOrphanedTransactionsCount(id, req.user!.id)
+
+  res.status(200).json({
+    success: true,
+    count,
+  })
+})
+```
+
+### Reassign Transactions
+
+```typescript backend/controllers/categories/category-controller.ts
+export const reassignTransactions = asyncHandler(async (req: Request, res: Response) => {
+  const { id: fromCategoryId } = req.params
+  const { to_category_id } = req.body
+
+  if (!to_category_id) {
+    throw new AppError('to_category_id es requerido', 400)
+  }
+
+  const count = await CategoryRepository.reassignTransactions(
+    fromCategoryId,
+    to_category_id,
+    req.user!.id
+  )
+
+  res.status(200).json({
+    success: true,
+    message: `Transacciones reasignadas: ${count}`,
+    reassignedCount: count,
+  })
+})
+```
+
+## Color Coding System
+
+Categories use color codes for visual identification:
+
+<Tabs>
+  <Tab title="Expense Categories">
+    ```typescript
+    // Common expense category colors
+    const expenseColors = {
+      groceries: '#10B981',   // Green
+      transport: '#3B82F6',   // Blue
+      utilities: '#F59E0B',   // Amber
+      entertainment: '#8B5CF6', // Purple
+      healthcare: '#EF4444',  // Red
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Income Categories">
+    ```typescript
+    // Common income category colors
+    const incomeColors = {
+      salary: '#059669',      // Emerald
+      freelance: '#0891B2',   // Cyan
+      investments: '#7C3AED', // Violet
+      gifts: '#EC4899',       // Pink
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Colors are stored as hex codes and are **not encrypted**. This allows the UI to display colored elements without requiring account decryption.
+</Note>
+
+## Category Icons
+
+Categories can have optional icon identifiers:
+
+```typescript
+// Example icon identifiers
+const categoryIcons = {
+  groceries: 'shopping-cart',
+  transport: 'car',
+  utilities: 'home',
+  entertainment: 'film',
+  healthcare: 'heart',
+  salary: 'briefcase',
+  investments: 'trending-up',
+}
+```
+
+## API Routes
+
+### Category Routes
+
+```typescript backend/routes/categories/category-routes.ts
+import { Router } from 'express'
+import {
+  getCategories,
+  getCategoryById,
+  createCategory,
+  updateCategory,
+  deleteCategory,
+  getOrphanedCount,
+  reassignTransactions,
+} from '../../controllers/categories/category-controller.js'
+import { authenticateToken } from '../../middlewares/authenticateToken.js'
+import { checkCSRF } from '../../middlewares/csrfMiddleware.js'
+
+const router: Router = Router()
+
+router.use(authenticateToken)
+
+router.get('/', getCategories)
+router.get('/:id', getCategoryById)
+router.post('/', checkCSRF, createCategory)
+router.put('/:id', checkCSRF, updateCategory)
+router.delete('/:id', checkCSRF, deleteCategory)
+router.get('/:id/orphaned-count', getOrphanedCount)
+router.post('/:id/reassign', checkCSRF, reassignTransactions)
+```
+
+### Subcategory Routes
+
+```typescript backend/routes/subcategories/subcategory-routes.ts
+import { Router } from 'express'
+import {
+  getSubcategories,
+  getSubcategoryById,
+  createSubcategory,
+  updateSubcategory,
+  deleteSubcategory,
+} from '../../controllers/subcategories/subcategory-controller.js'
+import { authenticateToken } from '../../middlewares/authenticateToken.js'
+import { checkCSRF } from '../../middlewares/csrfMiddleware.js'
+
+const router: Router = Router()
+
+router.use(authenticateToken)
+
+router.get('/', getSubcategories)
+router.get('/:id', getSubcategoryById)
+router.post('/', checkCSRF, createSubcategory)
+router.put('/:id', checkCSRF, updateSubcategory)
+router.delete('/:id', checkCSRF, deleteSubcategory)
+```
+
+## Data Transfer Objects
+
+### Create Category DTO
+
+```typescript backend/models/categories/index.ts
+export interface CreateCategoryDTO {
+  account_id: string
+  name: string
+  color?: string
+  icon?: string
+}
+
+export interface CreateEncryptedCategoryDTO {
+  account_id: string
+  name_encrypted: string
+  color?: string
+  icon?: string
+}
+```
+
+### Update Category DTO
+
+```typescript backend/models/categories/index.ts
+export interface UpdateCategoryDTO {
+  name?: string
+  color?: string
+  icon?: string
+}
+
+export interface UpdateEncryptedCategoryDTO {
+  name_encrypted?: string
+  color?: string
+  icon?: string
+}
+```
+
+## Hierarchical Organization
+
+Categories and subcategories form a two-level hierarchy:
+
+```
+Category: Groceries (#10B981)
+├── Subcategory: Supermarket
+├── Subcategory: Farmers Market
+└── Subcategory: Convenience Store
+
+Category: Transport (#3B82F6)
+├── Subcategory: Gas
+├── Subcategory: Public Transit
+└── Subcategory: Parking
+```
+
+<Steps>
+  <Step title="Create Parent Category">
+    Create a top-level category with a name, color, and optional icon.
+  </Step>
+  
+  <Step title="Add Subcategories">
+    Create subcategories under the parent category for more granular organization.
+  </Step>
+  
+  <Step title="Assign to Transactions">
+    When creating transactions, assign them to specific subcategories. The parent category is automatically determined.
+  </Step>
+  
+  <Step title="Track and Budget">
+    Use categories for budgeting and subcategories for detailed spending analysis.
+  </Step>
+</Steps>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Consistent Colors" icon="palette">
+    Assign similar colors to related categories (e.g., all income categories in green shades).
+  </Card>
+  
+  <Card title="Keep Subcategories Focused" icon="target">
+    Each subcategory should represent a distinct spending type. Avoid overlapping subcategories.
+  </Card>
+  
+  <Card title="Plan Before Deleting" icon="trash">
+    Always check orphaned transaction counts and reassign them before deleting categories.
+  </Card>
+  
+  <Card title="Encrypt Sensitive Names" icon="lock">
+    Category names can reveal spending patterns. Use encryption for privacy-sensitive categories.
+  </Card>
+</CardGroup>
+
+## Integration with Transactions
+
+Categories are referenced in transactions through the `subcategory_id` field:
+
+```typescript
+// Transaction with category reference
+const transaction = {
+  id: 'uuid',
+  account_id: 'uuid',
+  subcategory_id: 'uuid', // Links to subcategory
+  date: '2026-03-05',
+  description: 'Weekly groceries',
+  amount: -85.50,
+}
+
+// When fetched with JOIN, includes category info
+const transactionWithDetails = {
+  ...transaction,
+  subcategory_name: 'Supermarket',
+  category_name: 'Groceries',
+  category_color: '#10B981',
+}
+```

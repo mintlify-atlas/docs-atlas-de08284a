@@ -1,0 +1,200 @@
+---
+title: 'Login'
+api: 'POST /api/auth/login'
+description: 'Authenticate a user with email and password'
+---
+
+Authenticates a user with their email and password. Returns JWT tokens in httpOnly cookies and encryption keys for client-side decryption.
+
+## Request
+
+<ParamField body="email" type="string" required>
+  User's email address. Must be a valid email format.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  User's password. Minimum 6 characters.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the login was successful.
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  User information.
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      Unique user identifier.
+    </ResponseField>
+    <ResponseField name="email" type="string">
+      User's email address.
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      User's display name.
+    </ResponseField>
+    <ResponseField name="email_verified" type="boolean">
+      Whether the email has been verified.
+    </ResponseField>
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp of account creation.
+    </ResponseField>
+    <ResponseField name="updated_at" type="string">
+      ISO 8601 timestamp of last update.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="key_salt" type="string">
+  Hex-encoded salt used for key derivation. Required for client-side encryption.
+</ResponseField>
+
+<ResponseField name="verification_blob" type="string | null">
+  Encrypted verification data for PIN validation. Null if not configured.
+</ResponseField>
+
+<ResponseField name="encrypted_keys" type="array">
+  Array of encrypted account keys.
+  <Expandable title="items">
+    <ResponseField name="account_id" type="string">
+      Account identifier.
+    </ResponseField>
+    <ResponseField name="encrypted_key" type="string">
+      Base64-encoded encrypted account key.
+    </ResponseField>
+    <ResponseField name="key_version" type="number">
+      Version number of the encryption key.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="csrfToken" type="string">
+  CSRF token for subsequent authenticated requests.
+</ResponseField>
+
+## Cookies Set
+
+The endpoint sets the following httpOnly cookies:
+
+- **accessToken**: JWT access token (15 minute expiry)
+- **refreshToken**: JWT refresh token (8 hour expiry)
+- **csrfToken**: CSRF protection token
+
+All cookies are:
+- `httpOnly: true` (not accessible via JavaScript)
+- `secure: true` in production
+- `sameSite: 'none'` in production, `'lax'` in development
+
+## Example Request
+
+```bash
+curl -X POST https://api.homeaccount.app/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "SecurePass123!"
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "user": {
+    "id": "usr_1a2b3c4d5e6f",
+    "email": "user@example.com",
+    "name": "John Doe",
+    "email_verified": true,
+    "created_at": "2024-01-15T10:30:00.000Z",
+    "updated_at": "2024-03-05T14:20:00.000Z"
+  },
+  "key_salt": "a1b2c3d4e5f6789...",
+  "verification_blob": "ZW5jcnlwdGVkX3Zlcml...",
+  "encrypted_keys": [
+    {
+      "account_id": "acc_9z8y7x6w5v4u",
+      "encrypted_key": "U2FsdGVkX1+abcdef...",
+      "key_version": 1
+    }
+  ],
+  "csrfToken": "csrf_abc123xyz..."
+}
+```
+
+## Error Responses
+
+<ResponseField name="error" type="string">
+  Error message describing what went wrong.
+</ResponseField>
+
+<ResponseField name="code" type="string">
+  Machine-readable error code.
+</ResponseField>
+
+### 400 Bad Request
+
+```json
+{
+  "success": false,
+  "error": "Email inválido"
+}
+```
+
+Returned when:
+- Email is missing or invalid format
+- Password is missing
+- Request body validation fails
+
+### 401 Unauthorized
+
+```json
+{
+  "success": false,
+  "error": "Invalid email or password"
+}
+```
+
+Returned when:
+- Email doesn't exist in the system
+- Password is incorrect
+
+### 403 Forbidden - Email Not Verified
+
+```json
+{
+  "success": false,
+  "error": "Debes verificar tu email antes de iniciar sesión.",
+  "code": "EMAIL_NOT_VERIFIED",
+  "email": "user@example.com"
+}
+```
+
+Returned when the user hasn't verified their email address. The client should redirect to the email verification flow.
+
+### 429 Too Many Requests
+
+Returned when rate limit is exceeded. Login endpoint has rate limiting protection.
+
+## Implementation Details
+
+- **Rate Limiting**: The login endpoint is protected by rate limiting middleware (`loginRateLimiter`)
+- **Password Hashing**: Passwords are hashed using bcrypt with configurable salt rounds
+- **Token Generation**: JWT tokens are generated using the `tokenService`
+- **Email Verification**: Users must verify their email before they can log in
+- **Session Management**: Sessions are managed via httpOnly cookies for security
+
+## Security Considerations
+
+1. **Never send tokens in response body**: Access and refresh tokens are only set as httpOnly cookies
+2. **CSRF Protection**: All authenticated requests must include the CSRF token
+3. **Email Verification Required**: Users cannot log in until they verify their email
+4. **Rate Limiting**: Prevents brute force attacks
+5. **Secure Cookies**: In production, all cookies use `secure: true` and `sameSite: 'none'`
+
+## Source Code
+
+Controller: `backend/controllers/auth/auth-controller.ts:95`
+
+Route: `backend/routes/auth/auth-routes.ts:47`

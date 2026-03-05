@@ -1,0 +1,78 @@
+---
+title: "Delete Budget"
+api: "DELETE /budget/:id"
+description: "Delete an existing budget"
+---
+
+Permanently deletes a budget. This action cannot be undone.
+
+## Path Parameters
+
+<ParamField path="id" type="string" required>
+  The UUID of the budget to delete
+</ParamField>
+
+## Request Body
+
+<ParamField body="account_id" type="string" required>
+  The UUID of the account this budget belongs to. Used for verification.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates if the request was successful
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Confirmation message
+</ResponseField>
+
+<RequestExample>
+```bash cURL
+curl -X DELETE https://api.homeaccount.com/budget/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "X-CSRF-Token: YOUR_CSRF_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_id": "123e4567-e89b-12d3-a456-426614174000"
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success Response
+{
+  "success": true,
+  "message": "Presupuesto eliminado"
+}
+```
+
+```json Error - Budget Not Found
+{
+  "success": false,
+  "message": "Presupuesto no encontrado"
+}
+```
+
+```json Error - Missing account_id
+{
+  "success": false,
+  "message": "account_id es requerido"
+}
+```
+</ResponseExample>
+
+## Error Codes
+
+- `400` - Missing `account_id` in request body
+- `401` - Missing or invalid authentication token
+- `403` - Invalid CSRF token
+- `404` - Budget not found or does not belong to the specified account
+- `500` - Internal server error
+
+## Notes
+
+- This action is permanent and cannot be undone
+- The budget must belong to the specified account to be deleted
+- After deletion, the category can have a new budget created for it

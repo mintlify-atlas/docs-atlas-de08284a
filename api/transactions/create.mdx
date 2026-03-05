@@ -1,0 +1,251 @@
+---
+title: "Create Transaction"
+api: "POST /api/transactions"
+description: "Create a new transaction in a user's account"
+---
+
+## Overview
+
+This endpoint creates a new transaction for a specified account. It supports both encrypted and unencrypted transaction data to accommodate the application's end-to-end encryption feature.
+
+## Authentication
+
+Requires a valid authentication token. The transaction will be created for the authenticated user.
+
+## Request Body
+
+The API accepts two formats: encrypted or unencrypted. The presence of `description_encrypted` determines which validation schema is used.
+
+### Encrypted Format (Recommended)
+
+<ParamField body="account_id" type="string" required>
+  UUID of the account where the transaction will be created
+</ParamField>
+
+<ParamField body="date" type="string" required>
+  Transaction date in YYYY-MM-DD format. Cannot be a future date.
+</ParamField>
+
+<ParamField body="description_encrypted" type="string" required>
+  Encrypted transaction description. Must be a non-empty string containing the encrypted data.
+</ParamField>
+
+<ParamField body="amount_encrypted" type="string" required>
+  Encrypted transaction amount. Must be a non-empty string containing the encrypted data.
+</ParamField>
+
+<ParamField body="amount_sign" type="string" required>
+  Indicates whether the transaction is income or expense.
+  
+  <Expandable title="Allowed values">
+    - `positive` - Income transaction
+    - `negative` - Expense transaction
+  </Expandable>
+</ParamField>
+
+<ParamField body="subcategory_id" type="string">
+  UUID of the subcategory to assign to this transaction. Can be null.
+</ParamField>
+
+<ParamField body="bank_category_encrypted" type="string">
+  Encrypted bank-assigned category (for imported transactions). Can be null.
+</ParamField>
+
+<ParamField body="bank_subcategory_encrypted" type="string">
+  Encrypted bank-assigned subcategory (for imported transactions). Can be null.
+</ParamField>
+
+### Unencrypted Format (Legacy)
+
+<ParamField body="account_id" type="string" required>
+  UUID of the account where the transaction will be created
+</ParamField>
+
+<ParamField body="date" type="string" required>
+  Transaction date in YYYY-MM-DD format. Cannot be a future date.
+</ParamField>
+
+<ParamField body="description" type="string" required>
+  Transaction description. Must be between 3 and 60 characters.
+</ParamField>
+
+<ParamField body="amount" type="number" required>
+  Transaction amount. Must be a positive number. Use subcategory to indicate expense vs income.
+</ParamField>
+
+<ParamField body="subcategory_id" type="string">
+  UUID of the subcategory to assign to this transaction. Can be null.
+</ParamField>
+
+<ParamField body="bank_category" type="string">
+  Bank-assigned category (for imported transactions). Maximum 100 characters.
+</ParamField>
+
+<ParamField body="bank_subcategory" type="string">
+  Bank-assigned subcategory (for imported transactions). Maximum 100 characters.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the transaction was created successfully
+</ResponseField>
+
+<ResponseField name="transaction" type="object">
+  The created transaction object
+  
+  <Expandable title="Transaction properties">
+    <ResponseField name="id" type="string">
+      UUID of the created transaction
+    </ResponseField>
+    
+    <ResponseField name="account_id" type="string">
+      UUID of the account
+    </ResponseField>
+    
+    <ResponseField name="date" type="string">
+      Transaction date (YYYY-MM-DD format)
+    </ResponseField>
+    
+    <ResponseField name="subcategory_id" type="string | null">
+      UUID of the assigned subcategory
+    </ResponseField>
+    
+    <ResponseField name="description" type="string">
+      Transaction description (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="amount" type="number">
+      Transaction amount (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="description_encrypted" type="string">
+      Encrypted description (if encrypted format)
+    </ResponseField>
+    
+    <ResponseField name="amount_encrypted" type="string">
+      Encrypted amount (if encrypted format)
+    </ResponseField>
+    
+    <ResponseField name="amount_sign" type="string">
+      Amount sign: 'positive' or 'negative' (if encrypted format)
+    </ResponseField>
+    
+    <ResponseField name="bank_category" type="string | null">
+      Bank category (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="bank_subcategory" type="string | null">
+      Bank subcategory (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp of creation
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+### Encrypted Transaction Request
+
+```bash
+curl -X POST https://api.example.com/api/transactions \
+  -H "Content-Type: application/json" \
+  -H "Cookie: token=your-auth-token" \
+  -d '{
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "date": "2026-03-01",
+    "description_encrypted": "U2FsdGVkX1+xxx...",
+    "amount_encrypted": "U2FsdGVkX1+yyy...",
+    "amount_sign": "negative",
+    "subcategory_id": "987fcdeb-51a2-43f1-b789-123456789abc"
+  }'
+```
+
+### Encrypted Transaction Response
+
+```json
+{
+  "success": true,
+  "transaction": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "date": "2026-03-01T00:00:00.000Z",
+    "description_encrypted": "U2FsdGVkX1+xxx...",
+    "amount_encrypted": "U2FsdGVkX1+yyy...",
+    "amount_sign": "negative",
+    "subcategory_id": "987fcdeb-51a2-43f1-b789-123456789abc",
+    "bank_category_encrypted": null,
+    "bank_subcategory_encrypted": null,
+    "created_at": "2026-03-05T10:30:00.000Z"
+  }
+}
+```
+
+### Unencrypted Transaction Request
+
+```bash
+curl -X POST https://api.example.com/api/transactions \
+  -H "Content-Type: application/json" \
+  -H "Cookie: token=your-auth-token" \
+  -d '{
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "date": "2026-03-01",
+    "description": "Grocery shopping at Whole Foods",
+    "amount": 125.50,
+    "subcategory_id": "987fcdeb-51a2-43f1-b789-123456789abc"
+  }'
+```
+
+### Unencrypted Transaction Response
+
+```json
+{
+  "success": true,
+  "transaction": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "date": "2026-03-01T00:00:00.000Z",
+    "description": "Grocery shopping at Whole Foods",
+    "amount": 125.50,
+    "subcategory_id": "987fcdeb-51a2-43f1-b789-123456789abc",
+    "bank_category": null,
+    "bank_subcategory": null,
+    "created_at": "2026-03-05T10:30:00.000Z"
+  }
+}
+```
+
+## Error Responses
+
+<ResponseField name="success" type="boolean">
+  Always `false` for errors
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message describing what went wrong
+</ResponseField>
+
+### Common Errors
+
+- **400 Bad Request**: Invalid parameters (e.g., invalid UUID, missing required fields, future date)
+- **401 Unauthorized**: Missing or invalid authentication token
+- **404 Not Found**: Account not found or user doesn't have access
+
+### Example Error Response
+
+```json
+{
+  "success": false,
+  "error": "account_id debe ser un UUID válido"
+}
+```
+
+## Notes
+
+- CSRF protection is enforced for this endpoint
+- The `description` field is sanitized before storage to prevent XSS attacks
+- When using encrypted format, the client is responsible for encrypting sensitive data
+- The `amount_sign` field is required for encrypted transactions to enable server-side calculations without decryption
+- Dates in the future are rejected by validation

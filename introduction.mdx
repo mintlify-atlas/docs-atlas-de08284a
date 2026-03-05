@@ -1,0 +1,219 @@
+---
+title: Introduction
+description: Home Account is a privacy-first personal finance tracker with end-to-end encryption, Excel imports, and AI-powered investment features.
+---
+
+# Welcome to Home Account
+
+Home Account is a **personal finance tracker built for privacy and simplicity**. Every app available was either too complex or didn't fit the specific needs of managing household finances with true data ownership. Home Account solves this with end-to-end encryption, intuitive Excel imports, and AI-powered investment features.
+
+## Why Home Account?
+
+<Note>
+**Your financial data is yours, not ours.** Even if the server is compromised, your transactions remain encrypted blobs that are unreadable without your password.
+</Note>
+
+### Key Problems Solved
+
+- **Privacy**: Traditional finance apps store your data in plain text. Home Account uses envelope encryption so the server never sees your transaction details.
+- **Manual Entry Pain**: Bulk import transactions from Excel/CSV with AI-powered category suggestions.
+- **Complex UIs**: Clean dashboard with the essential features you actually use daily.
+- **Investment Blindness**: Integrated investment module with AI chat, portfolio recommendations, and market data.
+
+## Core Features
+
+### End-to-End Encryption
+
+Home Account implements **envelope encryption** to ensure your financial data never leaves your device unencrypted:
+
+- **User Key (UK)**: Derived from your password using Argon2id, never leaves your browser
+- **Account Key (AK)**: Random 256-bit key per account, encrypted with your User Key
+- **Data Encryption**: Transactions and categories encrypted with AES-256-GCM
+
+The server is just a dumb storage layer—it can't read, search, or aggregate your encrypted data.
+
+**What gets encrypted:**
+- Transaction descriptions and amounts
+- Category names
+- Bank category information
+
+**What stays plain:**
+- Transaction dates (for filtering)
+- Amount signs (+/- for income/expense)
+- Category colors (UI only)
+- Budget limits (not actual spending)
+
+<Info>
+With E2E encryption, all calculations (totals, stats, filtering) happen client-side after decryption. For personal/family use, this performs imperceptibly—5000 transactions decrypt in ~5-50ms.
+</Info>
+
+### Excel/CSV Import System
+
+The **import flow** is the core feature that makes Home Account practical:
+
+<Steps>
+  <Step title="Export from your bank">
+    Download transactions as Excel or CSV from your bank's website.
+  </Step>
+  
+  <Step title="Upload to Home Account">
+    Drag and drop the file into the import interface (5MB max, rate-limited).
+  </Step>
+  
+  <Step title="AI categorization">
+    AI parses descriptions and suggests categories automatically using saved mappings.
+  </Step>
+  
+  <Step title="Review and confirm">
+    Edit suggestions, confirm mappings, and transactions appear instantly via optimistic UI.
+  </Step>
+  
+  <Step title="Server sync">
+    Backend validates and syncs encrypted transactions, updating all stats.
+  </Step>
+</Steps>
+
+Supported formats: `.xls`, `.xlsx`, `.csv`
+
+### Budget Management
+
+Set spending limits per category with visual progress tracking:
+
+- **Flexible Periods**: Monthly, weekly, or yearly budgets
+- **Alert Thresholds**: Configurable warnings (default 80%)
+- **Visual Indicators**: Green (normal), amber (approaching limit), red (exceeded)
+- **Client-Side Calculation**: Spending calculated from decrypted transactions, not SQL aggregation
+
+### Investment Module
+
+AI-powered investment features integrated into your dashboard:
+
+- **Risk Profile Assessment**: 7-step questionnaire to determine your investment strategy
+- **Portfolio Recommendations**: AI suggestions based on your savings capacity and risk tolerance
+- **AI Chat Assistant**: Conversational finance Q&A with context about your accounts
+- **Market Data**: Real-time prices for BTC, ETH, EUR/USD, S&P 500, MSCI World
+- **Investment Simulator**: Long-term projection scenarios
+
+**AI Providers Supported:**
+- **Groq** (Recommended): Free, fast, 15 requests/hour
+- **Ollama**: Local execution, no rate limits, runs on your machine
+- **Claude**: Best reasoning quality (paid)
+- **Gemini**: Good free tier with limited requests
+
+<Warning>
+AI chats and investment profiles are **NOT encrypted yet**. Only transactions and categories have E2E encryption. AI content is visible to the provider.
+</Warning>
+
+### Account Sharing & Invitations
+
+Share accounts with family members securely:
+
+- Invite users via email with one-time invitation links (24h expiry)
+- **Invitation Secret** transfers the Account Key via URL fragment
+- Each user encrypts the shared Account Key with their own User Key
+- Multiple users can decrypt the same account's data independently
+
+### OAuth + PIN Authentication
+
+Login with Google or GitHub, but maintain E2E encryption:
+
+- **OAuth** proves your identity (authentication)
+- **6-8 digit PIN** derives your encryption keys (encryption layer)
+- PIN uses Argon2id with aggressive parameters to compensate for lower entropy
+- Rate-limited to prevent brute force attacks
+
+### Progressive Web App (PWA)
+
+Installable on mobile and desktop as a standalone app:
+
+- Offline navigation caching with Serwist
+- Static assets and fonts cached
+- API calls NOT cached (encrypted data + auth tokens managed by React Query)
+
+### Password Recovery
+
+Two mechanisms prevent "password lost = data lost":
+
+1. **BIP39 Recovery Phrase**: 24-word mnemonic generated at setup encrypts a copy of your Account Keys
+2. **Email Reset**: Standard password reset via EmailJS re-encrypts all keys with new password
+
+## Architecture Overview
+
+Home Account is a modern full-stack application designed for privacy and performance:
+
+### Frontend Stack
+
+```typescript
+Next.js 16 (App Router)     // React framework with Server Components
+TypeScript                  // Type safety
+React Query (TanStack)      // Server state caching, optimistic updates
+Zustand                     // UI state management (modals, filters)
+Tailwind CSS                // Utility-first styling
+Recharts                    // Charts (lazy loaded)
+@noble/hashes               // Argon2id + crypto utilities
+Serwist                     // PWA service worker
+```
+
+### Backend Stack
+
+```typescript
+Express 5                   // Node.js web framework
+MySQL                       // Relational database (Aiven hosted)
+JWT (httpOnly cookies)      // Authentication (15min access + 8h refresh)
+Passport.js                 // OAuth (Google, GitHub)
+bcrypt                      // Password hashing
+multer                      // File upload handling
+xlsx                        // Excel parsing
+zod                         // Request validation
+```
+
+### Security Features
+
+- **CSRF Protection**: Double Submit Cookie pattern
+- **Rate Limiting**: Login attempts (7/15min), file imports, AI requests
+- **Security Headers**: CSP, X-Frame-Options, X-Content-Type-Options
+- **Input Sanitization**: DOMPurify on frontend, regex on backend
+- **XSS Protection**: Content sanitization for user inputs
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Personal Finance" icon="user">
+    Track your income, expenses, and savings goals with complete privacy.
+  </Card>
+  
+  <Card title="Household Budget" icon="users">
+    Share accounts with family members to manage shared expenses and budgets.
+  </Card>
+  
+  <Card title="Investment Planning" icon="chart-line">
+    Get AI-powered portfolio recommendations based on your financial situation.
+  </Card>
+  
+  <Card title="Self-Hosted Privacy" icon="server">
+    Deploy on your own infrastructure for complete control of your data.
+  </Card>
+</CardGroup>
+
+## What You'll Learn
+
+The project demonstrates real-world implementation of:
+
+- **Envelope encryption** with Argon2id and AES-256-GCM
+- **Server Components + Client Components** separation in Next.js 16
+- **Optimistic UI updates** with React Query mutations
+- **OAuth with separate encryption layer** (OAuth for auth, PIN for encryption)
+- **Client-side data processing** due to E2E encryption constraints
+- **Multi-provider AI integration** (Groq, Ollama, Claude, Gemini)
+- **PWA implementation** with Serwist caching strategies
+- **Secure file uploads** with validation and rate limiting
+
+## Ready to Get Started?
+
+<Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+  Get from zero to your first transaction in 5 minutes
+</Card>
+
+<Card title="Self-Hosting Setup" icon="server" href="/installation">
+  Deploy Home Account on your own infrastructure
+</Card>

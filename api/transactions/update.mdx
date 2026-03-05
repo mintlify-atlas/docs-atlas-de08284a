@@ -1,0 +1,279 @@
+---
+title: "Update Transaction"
+api: "PUT /api/transactions/:id"
+description: "Update an existing transaction"
+---
+
+## Overview
+
+This endpoint updates an existing transaction. It supports both encrypted and unencrypted formats. You can update any combination of the transaction's fields.
+
+## Authentication
+
+Requires a valid authentication token. Only transactions belonging to accounts owned by the authenticated user can be updated.
+
+## Path Parameters
+
+<ParamField path="id" type="string" required>
+  UUID of the transaction to update
+</ParamField>
+
+## Request Body
+
+The API accepts two formats: encrypted or unencrypted. The presence of `description_encrypted` or `amount_encrypted` determines which validation schema is used. At least one field must be provided.
+
+### Encrypted Format
+
+<ParamField body="date" type="string">
+  Transaction date in YYYY-MM-DD format. Cannot be a future date.
+</ParamField>
+
+<ParamField body="description_encrypted" type="string">
+  Updated encrypted transaction description
+</ParamField>
+
+<ParamField body="amount_encrypted" type="string">
+  Updated encrypted transaction amount
+</ParamField>
+
+<ParamField body="amount_sign" type="string">
+  Updated amount sign
+  
+  <Expandable title="Allowed values">
+    - `positive` - Income transaction
+    - `negative` - Expense transaction
+  </Expandable>
+</ParamField>
+
+<ParamField body="subcategory_id" type="string">
+  UUID of the subcategory to assign. Can be null to remove the subcategory.
+</ParamField>
+
+<ParamField body="bank_category_encrypted" type="string">
+  Updated encrypted bank category. Can be null.
+</ParamField>
+
+<ParamField body="bank_subcategory_encrypted" type="string">
+  Updated encrypted bank subcategory. Can be null.
+</ParamField>
+
+### Unencrypted Format (Legacy)
+
+<ParamField body="date" type="string">
+  Transaction date in YYYY-MM-DD format. Cannot be a future date.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Updated transaction description. Must be between 3 and 60 characters.
+</ParamField>
+
+<ParamField body="amount" type="number">
+  Updated transaction amount. Must be a positive number.
+</ParamField>
+
+<ParamField body="subcategory_id" type="string">
+  UUID of the subcategory to assign. Can be null to remove the subcategory.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the transaction was updated successfully
+</ResponseField>
+
+<ResponseField name="transaction" type="object">
+  The updated transaction object
+  
+  <Expandable title="Transaction properties">
+    <ResponseField name="id" type="string">
+      UUID of the transaction
+    </ResponseField>
+    
+    <ResponseField name="account_id" type="string">
+      UUID of the account
+    </ResponseField>
+    
+    <ResponseField name="date" type="string">
+      Transaction date (ISO 8601 format)
+    </ResponseField>
+    
+    <ResponseField name="subcategory_id" type="string | null">
+      UUID of the assigned subcategory
+    </ResponseField>
+    
+    <ResponseField name="description" type="string">
+      Transaction description (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="amount" type="number">
+      Transaction amount (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="description_encrypted" type="string">
+      Encrypted description (if encrypted)
+    </ResponseField>
+    
+    <ResponseField name="amount_encrypted" type="string">
+      Encrypted amount (if encrypted)
+    </ResponseField>
+    
+    <ResponseField name="amount_sign" type="string">
+      'positive', 'negative', or 'zero' (if encrypted)
+    </ResponseField>
+    
+    <ResponseField name="bank_category" type="string | null">
+      Bank category (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="bank_subcategory" type="string | null">
+      Bank subcategory (if unencrypted)
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp of creation
+    </ResponseField>
+    
+    <ResponseField name="updated_at" type="string">
+      ISO 8601 timestamp of last update
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+### Update Encrypted Transaction
+
+```bash
+curl -X PUT https://api.example.com/api/transactions/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Content-Type: application/json" \
+  -H "Cookie: token=your-auth-token" \
+  -d '{
+    "description_encrypted": "U2FsdGVkX1+updated...",
+    "amount_encrypted": "U2FsdGVkX1+newamount...",
+    "amount_sign": "negative",
+    "subcategory_id": "987fcdeb-51a2-43f1-b789-123456789abc"
+  }'
+```
+
+### Update Encrypted Transaction Response
+
+```json
+{
+  "success": true,
+  "transaction": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "date": "2026-03-01T00:00:00.000Z",
+    "description_encrypted": "U2FsdGVkX1+updated...",
+    "amount_encrypted": "U2FsdGVkX1+newamount...",
+    "amount_sign": "negative",
+    "subcategory_id": "987fcdeb-51a2-43f1-b789-123456789abc",
+    "bank_category_encrypted": null,
+    "bank_subcategory_encrypted": null,
+    "created_at": "2026-03-05T10:30:00.000Z",
+    "updated_at": "2026-03-05T14:45:00.000Z"
+  }
+}
+```
+
+### Update Unencrypted Transaction
+
+```bash
+curl -X PUT https://api.example.com/api/transactions/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Content-Type: application/json" \
+  -H "Cookie: token=your-auth-token" \
+  -d '{
+    "description": "Updated grocery shopping",
+    "amount": 150.75
+  }'
+```
+
+### Update Unencrypted Transaction Response
+
+```json
+{
+  "success": true,
+  "transaction": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "account_id": "123e4567-e89b-12d3-a456-426614174000",
+    "date": "2026-03-01T00:00:00.000Z",
+    "description": "Updated grocery shopping",
+    "amount": 150.75,
+    "subcategory_id": "987fcdeb-51a2-43f1-b789-123456789abc",
+    "bank_category": null,
+    "bank_subcategory": null,
+    "created_at": "2026-03-05T10:30:00.000Z",
+    "updated_at": "2026-03-05T14:45:00.000Z"
+  }
+}
+```
+
+### Update Only Date
+
+```bash
+curl -X PUT https://api.example.com/api/transactions/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Content-Type: application/json" \
+  -H "Cookie: token=your-auth-token" \
+  -d '{
+    "date": "2026-02-28"
+  }'
+```
+
+### Remove Subcategory
+
+```bash
+curl -X PUT https://api.example.com/api/transactions/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Content-Type: application/json" \
+  -H "Cookie: token=your-auth-token" \
+  -d '{
+    "subcategory_id": null
+  }'
+```
+
+## Error Responses
+
+<ResponseField name="success" type="boolean">
+  Always `false` for errors
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message describing what went wrong
+</ResponseField>
+
+### Common Errors
+
+- **400 Bad Request**: Invalid parameters or no fields provided for update
+- **401 Unauthorized**: Missing or invalid authentication token
+- **404 Not Found**: Transaction not found or user doesn't have access
+
+### Example Error Responses
+
+```json
+{
+  "success": false,
+  "error": "Transacción no encontrada"
+}
+```
+
+```json
+{
+  "success": false,
+  "error": "Debes proporcionar al menos un campo para actualizar"
+}
+```
+
+```json
+{
+  "success": false,
+  "error": "La descripción debe tener al menos 3 caracteres"
+}
+```
+
+## Notes
+
+- CSRF protection is enforced for this endpoint
+- You must provide at least one field to update
+- The `description` field is sanitized before storage when using unencrypted format
+- You can mix encrypted and unencrypted fields in the same request if updating from unencrypted to encrypted format
+- The `updated_at` timestamp is automatically updated
+- Only the fields you provide will be updated; other fields remain unchanged

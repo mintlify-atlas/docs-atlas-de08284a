@@ -1,0 +1,478 @@
+---
+title: 'Budgets'
+description: 'Set category-based budgets with customizable periods and alert thresholds'
+---
+
+## Overview
+
+Budgets in Home Account allow users to set spending limits for specific categories. Each budget can have a custom period (monthly, weekly, or yearly) and alert thresholds to notify users when they're approaching their limits.
+
+<Info>
+  Budget tracking compares actual spending from transactions against configured limits, helping users maintain financial discipline.
+</Info>
+
+## Budget Structure
+
+Each budget is associated with a category and account:
+
+```typescript backend/models/budget/index.ts
+export type BudgetPeriod = 'monthly' | 'weekly' | 'yearly'
+
+export interface CategoryBudget {
+  id: string
+  account_id: string
+  category_id: string
+  amount: number
+  period: BudgetPeriod
+  alert_threshold: number
+  created_at: Date
+  updated_at?: Date
+}
+```
+
+### Budget Fields
+
+- **amount**: The budget limit in the account's currency
+- **period**: How often the budget resets (`monthly`, `weekly`, `yearly`)
+- **alert_threshold**: Percentage (0-100) at which to trigger alerts (e.g., 80 means alert at 80% spent)
+- **category_id**: The category this budget applies to
+
+## Creating Budgets
+
+### Client-Side: React Query Hook
+
+```typescript frontend/lib/queries/budget.ts
+export function useCreateBudget() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: createBudget,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['budgets'] })
+    },
+  })
+}
+
+// Usage in a component
+const createBudgetMutation = useCreateBudget()
+
+const handleCreateBudget = () => {
+  createBudgetMutation.mutate({
+    account_id: activeAccountId,
+    category_id: selectedCategoryId,
+    amount: 500,
+    period: 'monthly',
+    alert_threshold: 80,
+  })
+}
+```
+
+### Server-Side: Budget Controller
+
+```typescript backend/controllers/budget/budget-controller.ts
+export const createBudget = asyncHandler(async (req: Request, res: Response) => {
+  const result = createBudgetSchema.safeParse(req.body)
+  
+  if (!result.success) {
+    const messages = result.error.issues.map(i => i.message).join(', ')
+    throw new AppError(messages, 400)
+  }
+
+  const { account_id, category_id, amount, period, alert_threshold } = result.data
+
+  const budget = await BudgetRepository.create({
+    account_id,
+    category_id,
+    amount,
+    period,
+    alert_threshold,
+  })
+
+  res.status(201).json({
+    success: true,
+    data: budget,
+  })
+})
+```
+
+### API Endpoint
+
+```http
+POST /api/budget
+Content-Type: application/json
+X-CSRF-Token: <token>
+
+{
+  "account_id": "uuid",
+  "category_id": "uuid",
+  "amount": 500,
+  "period": "monthly",
+  "alert_threshold": 80
+}
+```
+
+<Note>
+  Default values: `period` defaults to `"monthly"` and `alert_threshold` defaults to `75` if not specified.
+</Note>
+
+## Viewing Budgets
+
+### Fetching All Budgets for an Account
+
+```typescript frontend/lib/queries/budget.ts
+export function useBudgets(accountId?: string) {
+  return useQuery({
+    queryKey: ['budgets', accountId],
+    queryFn: () => fetchBudgets(accountId!),
+    enabled: !!accountId,
+  })
+}
+
+// Usage
+const { data: budgets, isLoading, error } = useBudgets(activeAccountId)
+```
+
+### Server Endpoint
+
+```typescript backend/controllers/budget/budget-controller.ts
+export const getBudgets = asyncHandler(async (req: Request, res: Response) => {
+  const { account_id } = req.query
+
+  if (!account_id || typeof account_id !== 'string') {
+    throw new AppError('account_id es requerido', 400)
+  }
+
+  const budgets = await BudgetRepository.getByAccountId(account_id)
+
+  res.status(200).json({
+    success: true,
+    data: budgets,
+  })
+})
+```
+
+### Getting a Single Budget
+
+```http
+GET /api/budget/:id?account_id=uuid
+```
+
+```typescript backend/controllers/budget/budget-controller.ts
+export const getBudget = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const { account_id } = req.query
+
+  if (!account_id || typeof account_id !== 'string') {
+    throw new AppError('account_id es requerido', 400)
+  }
+
+  const budget = await BudgetRepository.getById(id)
+
+  if (!budget || budget.account_id !== account_id) {
+    throw new AppError('Presupuesto no encontrado', 404)
+  }
+
+  res.status(200).json({
+    success: true,
+    data: budget,
+  })
+})
+```
+
+## Updating Budgets
+
+### Update Hook
+
+```typescript frontend/lib/queries/budget.ts
+export function useUpdateBudget() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: string
+      payload: UpdateBudgetPayload & { account_id: string }
+    }) => updateBudget(id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['budgets'] })
+    },
+  })
+}
+```
+
+### Server Controller
+
+```typescript backend/controllers/budget/budget-controller.ts
+export const updateBudget = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+
+  const result = updateBudgetSchema.safeParse(req.body)
+  
+  if (!result.success) {
+    const messages = result.error.issues.map(i => i.message).join(', ')
+    throw new AppError(messages, 400)
+  }
+
+  const { account_id, amount, period, alert_threshold } = result.data
+
+  const existing = await BudgetRepository.getById(id)
+  if (!existing || existing.account_id !== account_id) {
+    throw new AppError('Presupuesto no encontrado', 404)
+  }
+
+  const budget = await BudgetRepository.update(id, {
+    amount,
+    period,
+    alert_threshold,
+  })
+
+  res.status(200).json({
+    success: true,
+    data: budget,
+  })
+})
+```
+
+<Accordion title="Updatable Fields">
+  - `amount`: New budget limit
+  - `period`: Change the budget period
+  - `alert_threshold`: Update the alert percentage
+  
+  **Note:** You cannot change the `category_id` or `account_id` of an existing budget. Create a new budget instead.
+</Accordion>
+
+## Deleting Budgets
+
+### Delete Hook
+
+```typescript frontend/lib/queries/budget.ts
+export function useDeleteBudget() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ id, accountId }: { id: string; accountId: string }) =>
+      deleteBudget(id, accountId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['budgets'] })
+    },
+  })
+}
+```
+
+### Server Controller
+
+```typescript backend/controllers/budget/budget-controller.ts
+export const deleteBudget = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const { account_id } = req.body
+
+  if (!account_id) {
+    throw new AppError('account_id es requerido', 400)
+  }
+
+  const existing = await BudgetRepository.getById(id)
+  if (!existing || existing.account_id !== account_id) {
+    throw new AppError('Presupuesto no encontrado', 404)
+  }
+
+  await BudgetRepository.delete(id)
+
+  res.status(200).json({
+    success: true,
+    message: 'Presupuesto eliminado',
+  })
+})
+```
+
+## Budget Periods
+
+Home Account supports three budget periods:
+
+<Tabs>
+  <Tab title="Monthly">
+    Budget resets on the 1st of each month. This is the most common period for household budgets.
+    
+    ```typescript
+    {
+      period: 'monthly',
+      amount: 500
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Weekly">
+    Budget resets every Monday. Useful for short-term spending goals or allowances.
+    
+    ```typescript
+    {
+      period: 'weekly',
+      amount: 100
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Yearly">
+    Budget resets on January 1st. Good for annual expenses like insurance or subscriptions.
+    
+    ```typescript
+    {
+      period: 'yearly',
+      amount: 5000
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Alert Thresholds
+
+Alert thresholds trigger notifications when spending reaches a certain percentage:
+
+```typescript
+// Alert when 80% of budget is spent
+{
+  amount: 500,
+  alert_threshold: 80,
+  // Alerts at $400 spent
+}
+
+// Alert when 90% of budget is spent
+{
+  amount: 1000,
+  alert_threshold: 90,
+  // Alerts at $900 spent
+}
+```
+
+<Warning>
+  Alert thresholds must be between 0 and 100. The system will track spending and compare it against the threshold percentage.
+</Warning>
+
+## Visual Progress Tracking
+
+Budgets are typically displayed with progress bars showing:
+
+1. **Current spending**: Sum of transactions in the current period
+2. **Budget limit**: The configured amount
+3. **Percentage**: Current spending / Budget limit * 100
+4. **Alert status**: Whether the threshold has been exceeded
+
+```typescript
+// Example progress calculation (client-side)
+function calculateBudgetProgress(budget: CategoryBudget, transactions: Transaction[]) {
+  const spent = transactions
+    .filter(t => t.subcategory_id === budget.category_id)
+    .filter(t => isInCurrentPeriod(t.date, budget.period))
+    .reduce((sum, t) => sum + Math.abs(t.amount), 0)
+    
+  const percentage = (spent / budget.amount) * 100
+  const isOverBudget = percentage > 100
+  const isNearLimit = percentage >= budget.alert_threshold
+  
+  return {
+    spent,
+    remaining: Math.max(0, budget.amount - spent),
+    percentage: Math.min(100, percentage),
+    isOverBudget,
+    isNearLimit,
+  }
+}
+```
+
+## API Routes
+
+All budget routes require authentication:
+
+```typescript backend/routes/budget/budget-routes.ts
+const router: Router = Router()
+
+router.use(authenticateToken)
+
+// GET /budget - Get all budgets for active account
+router.get('/', getBudgets)
+
+// GET /budget/:id - Get single budget
+router.get('/:id', getBudget)
+
+// POST /budget - Create budget
+router.post('/', checkCSRF, createBudget)
+
+// PATCH /budget/:id - Update budget
+router.patch('/:id', checkCSRF, updateBudget)
+
+// DELETE /budget/:id - Delete budget
+router.delete('/:id', checkCSRF, deleteBudget)
+```
+
+<Note>
+  Mutation endpoints (POST, PATCH, DELETE) require CSRF tokens for security.
+</Note>
+
+## Data Transfer Objects
+
+### Create Budget DTO
+
+```typescript backend/models/budget/index.ts
+export interface CreateBudgetDTO {
+  account_id: string
+  category_id: string
+  amount: number
+  period?: BudgetPeriod
+  alert_threshold?: number
+}
+```
+
+### Update Budget DTO
+
+```typescript backend/models/budget/index.ts
+export interface UpdateBudgetDTO {
+  amount?: number
+  period?: BudgetPeriod
+  alert_threshold?: number
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="One Budget Per Category" icon="layer-group">
+    Each category should have only one active budget. Create separate budgets for different spending categories.
+  </Card>
+  
+  <Card title="Set Realistic Limits" icon="bullseye">
+    Base budget amounts on historical spending data. Review and adjust budgets quarterly.
+  </Card>
+  
+  <Card title="Use Alert Thresholds" icon="bell">
+    Set thresholds at 75-80% to get early warnings before going over budget.
+  </Card>
+  
+  <Card title="Match Period to Spending" icon="calendar">
+    Use monthly budgets for recurring expenses, weekly for discretionary spending, and yearly for infrequent costs.
+  </Card>
+</CardGroup>
+
+## Integration with Categories
+
+Budgets are tightly integrated with the category system:
+
+- Each budget tracks spending for a specific category
+- Transactions assigned to that category count toward the budget
+- Subcategories roll up into their parent category's budget
+- Budget progress is calculated client-side after decrypting transaction amounts
+
+```typescript
+// Example: Get budget with spending data
+const budget = useBudgets(accountId)
+const transactions = useTransactions({
+  account_id: accountId,
+  start_date: getPeriodStartDate(budget.period),
+  end_date: getPeriodEndDate(budget.period),
+})
+
+// Calculate spending for this budget's category
+const spending = transactions.data?.transactions
+  .filter(t => t.category_id === budget.category_id)
+  .reduce((sum, t) => sum + Math.abs(t.amount), 0) || 0
+```

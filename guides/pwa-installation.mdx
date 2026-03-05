@@ -1,0 +1,549 @@
+---
+title: 'PWA Installation Guide'
+description: 'Install Home Account as a Progressive Web App for offline access and native app experience'
+icon: 'mobile'
+---
+
+Home Account is a Progressive Web App (PWA) that can be installed on your device for a native app-like experience. Once installed, you can access it from your home screen, use it offline, and enjoy faster load times.
+
+## What is a PWA?
+
+A Progressive Web App combines the best of web and native apps:
+
+- **Installable**: Add to home screen like a native app
+- **Offline-capable**: Access cached pages and data without internet
+- **Fast**: Assets are cached for instant loading
+- **Responsive**: Works on any device size
+- **Safe**: Served over HTTPS for security
+
+<Info>
+Home Account uses **Serwist** (the successor to Workbox) for advanced service worker management and caching strategies.
+</Info>
+
+## Installing on iOS (iPhone/iPad)
+
+<Steps>
+  <Step title="Open Safari">
+    Navigate to Home Account in Safari (PWA installation requires Safari on iOS)
+  </Step>
+
+  <Step title="Tap Share Button">
+    Tap the Share button (square with arrow pointing up) in the bottom toolbar
+  </Step>
+
+  <Step title="Add to Home Screen">
+    Scroll down and tap "Add to Home Screen"
+  </Step>
+
+  <Step title="Confirm Installation">
+    Edit the name if desired, then tap "Add" in the top right
+  </Step>
+
+  <Step title="Launch the App">
+    Find the Home Account icon on your home screen and tap to launch
+  </Step>
+</Steps>
+
+<Note>
+**iOS Limitation**: Service workers and offline caching are limited on iOS. The app will still work, but offline functionality may be reduced compared to Android.
+</Note>
+
+## Installing on Android
+
+<Steps>
+  <Step title="Open Chrome">
+    Navigate to Home Account in Chrome or any Chromium-based browser
+  </Step>
+
+  <Step title="Tap Install Prompt">
+    A banner will appear at the bottom: "Add Home Account to Home screen"
+    
+    Alternatively, tap the three-dot menu → "Install app" or "Add to Home screen"
+  </Step>
+
+  <Step title="Confirm Installation">
+    Tap "Install" in the confirmation dialog
+  </Step>
+
+  <Step title="Launch the App">
+    The app icon will appear in your app drawer and home screen
+  </Step>
+</Steps>
+
+<Info>
+Android provides the **best PWA experience** with full offline support, background sync, and push notifications (when implemented).
+</Info>
+
+## Installing on Desktop
+
+### Chrome/Edge/Brave (Chromium-based)
+
+<Steps>
+  <Step title="Navigate to Home Account">
+    Open Home Account in your browser
+  </Step>
+
+  <Step title="Click Install Button">
+    Look for the install icon in the address bar (⊕ or computer icon)
+    
+    Or go to menu → "Install Home Account"
+  </Step>
+
+  <Step title="Confirm Installation">
+    Click "Install" in the dialog
+  </Step>
+
+  <Step title="Launch from Desktop">
+    The app will open in its own window and appear in your applications folder
+  </Step>
+</Steps>
+
+### Firefox
+
+<Note>
+Firefox does not fully support PWA installation on desktop. However, you can:
+- Bookmark the page for quick access
+- Pin the tab for always-on access
+- Use the offline caching features (service worker still works)
+</Note>
+
+## Manifest Configuration
+
+The PWA manifest defines how the app appears when installed:
+
+```json
+// frontend/public/manifest.json
+{
+  "name": "Home Account",
+  "short_name": "HomeAccount",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1a7f37",
+  "description": "Control de gastos domésticos - Tu contabilidad personal y familiar",
+  "lang": "es",
+  "orientation": "portrait",
+  "categories": ["finance", "utilities"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/web-app-manifest-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
+```
+
+### Key Manifest Properties
+
+- **display: "standalone"**: App opens without browser UI
+- **start_url: "/"**: Where the app starts when launched
+- **scope: "/"**: URLs within scope are part of the PWA
+- **theme_color**: Affects system UI (status bar, task switcher)
+- **maskable icon**: Adapts to different device shapes (Android)
+
+## Service Worker Configuration
+
+Home Account uses Serwist for sophisticated caching strategies:
+
+```typescript
+// frontend/app/sw.ts
+import type { PrecacheEntry, SerwistGlobalConfig } from 'serwist'
+import {
+  Serwist,
+  CacheFirst,
+  NetworkFirst,
+  CacheableResponsePlugin,
+  ExpirationPlugin,
+} from 'serwist'
+
+const serwist = new Serwist({
+  precacheEntries: self.__SW_MANIFEST,
+  skipWaiting: false,
+  clientsClaim: true,
+  navigationPreload: true,
+  runtimeCaching: [
+    // Navigation requests (HTML pages)
+    {
+      matcher: ({ request }) => request.mode === 'navigate',
+      handler: new NetworkFirst({
+        cacheName: 'home-account-v1-pages',
+        plugins: [
+          new CacheableResponsePlugin({
+            statuses: [0, 200],
+          }),
+          new ExpirationPlugin({
+            maxEntries: 50,
+            maxAgeSeconds: 24 * 60 * 60, // 24 hours
+            purgeOnQuotaError: true,
+          }),
+        ],
+      }),
+    },
+    // Images
+    {
+      matcher: ({ request }) =>
+        request.destination === 'image' ||
+        /\.(png|jpg|jpeg|svg|gif|webp|ico)$/i.test(new URL(request.url).pathname),
+      handler: new CacheFirst({
+        cacheName: 'home-account-v1-images',
+        plugins: [
+          new CacheableResponsePlugin({
+            statuses: [0, 200],
+          }),
+          new ExpirationPlugin({
+            maxEntries: 100,
+            maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
+            purgeOnQuotaError: true,
+          }),
+        ],
+      }),
+    },
+    // Static assets (CSS, JS)
+    {
+      matcher: ({ request }) => 
+        request.destination === 'style' || request.destination === 'script',
+      handler: new CacheFirst({
+        cacheName: 'home-account-v1-static',
+        plugins: [
+          new CacheableResponsePlugin({
+            statuses: [0, 200],
+          }),
+          new ExpirationPlugin({
+            maxEntries: 100,
+            maxAgeSeconds: 365 * 24 * 60 * 60, // 1 year
+            purgeOnQuotaError: true,
+          }),
+        ],
+      }),
+    },
+    // Google Fonts
+    {
+      matcher: ({ url }) =>
+        url.hostname === 'fonts.googleapis.com' || 
+        url.hostname === 'fonts.gstatic.com',
+      handler: new CacheFirst({
+        cacheName: 'home-account-v1-fonts',
+        plugins: [
+          new CacheableResponsePlugin({
+            statuses: [0, 200],
+          }),
+          new ExpirationPlugin({
+            maxEntries: 30,
+            maxAgeSeconds: 365 * 24 * 60 * 60, // 1 year
+            purgeOnQuotaError: true,
+          }),
+        ],
+      }),
+    },
+  ],
+})
+
+serwist.addEventListeners()
+
+// Allow skip waiting on message
+self.addEventListener('message', (_event: Event) => {
+  self.skipWaiting()
+})
+```
+
+## Caching Strategies
+
+Home Account uses different strategies for different asset types:
+
+### NetworkFirst (Navigation)
+
+For HTML pages, the service worker tries the network first, falling back to cache if offline.
+
+```typescript
+{
+  matcher: ({ request }) => request.mode === 'navigate',
+  handler: new NetworkFirst({
+    cacheName: 'home-account-v1-pages',
+    plugins: [
+      new CacheableResponsePlugin({ statuses: [0, 200] }),
+      new ExpirationPlugin({
+        maxEntries: 50,
+        maxAgeSeconds: 24 * 60 * 60,  // 24 hours
+        purgeOnQuotaError: true,
+      }),
+    ],
+  }),
+}
+```
+
+**Why NetworkFirst?**
+- Always shows the latest content when online
+- Falls back to cached version when offline
+- Ideal for pages that change frequently
+
+### CacheFirst (Static Assets)
+
+For CSS, JavaScript, and images, the service worker checks the cache first.
+
+```typescript
+{
+  matcher: ({ request }) => 
+    request.destination === 'style' || request.destination === 'script',
+  handler: new CacheFirst({
+    cacheName: 'home-account-v1-static',
+    plugins: [
+      new CacheableResponsePlugin({ statuses: [0, 200] }),
+      new ExpirationPlugin({
+        maxEntries: 100,
+        maxAgeSeconds: 365 * 24 * 60 * 60,  // 1 year
+        purgeOnQuotaError: true,
+      }),
+    ],
+  }),
+}
+```
+
+**Why CacheFirst?**
+- Instant loading from cache
+- Reduces bandwidth usage
+- Perfect for immutable assets (hashed filenames)
+- Updates automatically when new versions are deployed
+
+### Not Cached: API Calls
+
+<Warning>
+**API requests are NOT cached** by the service worker. All transaction data, authentication, and dynamic content always come from the network.
+
+This ensures:
+- Data is always up-to-date
+- No stale transaction data
+- Proper authentication checks
+- Real-time sync across devices
+</Warning>
+
+## Next.js Integration
+
+Serwist is integrated into the Next.js build process:
+
+```typescript
+// frontend/next.config.ts
+import type { NextConfig } from 'next'
+import withSerwistInit from '@serwist/next'
+
+const withSerwist = withSerwistInit({
+  swSrc: 'app/sw.ts',
+  swDest: 'public/sw.js',
+  disable: process.env.NODE_ENV === 'development',
+})
+
+const nextConfig: NextConfig = {
+  reactStrictMode: true,
+  turbopack: {},
+  experimental: {
+    optimizePackageImports: ['lucide-react', 'recharts', '@tanstack/react-query'],
+  },
+}
+
+export default withSerwist(nextConfig)
+```
+
+### Build Process
+
+1. **Development**: Service worker is disabled for faster hot reload
+2. **Production**: Service worker is compiled and precache manifest is generated
+3. **Deployment**: sw.js is served from /public/sw.js
+
+<Note>
+The service worker automatically registers itself when the app loads. No manual registration needed.
+</Note>
+
+## Offline Capabilities
+
+### What Works Offline
+
+✅ **Available offline:**
+- All HTML pages (dashboard, transactions, settings)
+- All JavaScript and CSS assets
+- All images and icons
+- Google Fonts
+- Application UI
+
+❌ **Requires internet:**
+- Loading transaction data
+- Creating/editing transactions
+- Importing files
+- Authentication
+- Real-time sync
+
+### Offline User Experience
+
+When offline, users can:
+1. Open the app and view the UI
+2. See previously loaded transaction data (from React Query cache)
+3. Navigate between cached pages
+4. View cached images
+
+When attempting to create/edit data offline:
+- React Query will show the request as pending
+- Data will sync automatically when connection is restored
+- User sees clear "offline" indicators
+
+## Cache Management
+
+### Automatic Cache Expiration
+
+```typescript
+new ExpirationPlugin({
+  maxEntries: 100,          // Maximum cached items
+  maxAgeSeconds: 30 * 24 * 60 * 60,  // 30 days
+  purgeOnQuotaError: true,  // Clear cache if storage is full
+})
+```
+
+### Cache Versioning
+
+Caches are versioned (`home-account-v1-*`) to allow breaking changes:
+
+```typescript
+cacheName: 'home-account-v1-pages'    // Pages cache
+cacheName: 'home-account-v1-images'   // Images cache
+cacheName: 'home-account-v1-static'   // Static assets cache
+cacheName: 'home-account-v1-fonts'    // Fonts cache
+```
+
+<Info>
+When you increment the version (e.g., to `v2`), old caches are automatically cleaned up by Serwist.
+</Info>
+
+### Manual Cache Clearing
+
+Users can clear the cache in their browser:
+
+**Chrome/Edge:**
+1. Settings → Privacy and security → Site settings
+2. Find Home Account
+3. Click "Clear data"
+
+**Safari:**
+1. Settings → Safari → Advanced → Website Data
+2. Find Home Account
+3. Swipe left and delete
+
+## Update Strategy
+
+### Service Worker Updates
+
+```typescript
+const serwist = new Serwist({
+  precacheEntries: self.__SW_MANIFEST,
+  skipWaiting: false,      // Don't force update immediately
+  clientsClaim: true,      // Take control of clients on activation
+  navigationPreload: true, // Speed up navigation requests
+})
+```
+
+**Update Flow:**
+1. User visits the app
+2. Browser checks for new service worker
+3. If found, downloads in background
+4. New service worker waits for old one to finish
+5. User refreshes or closes all tabs
+6. New service worker activates
+
+### Force Update on Message
+
+```typescript
+self.addEventListener('message', (_event: Event) => {
+  self.skipWaiting()  // Immediately activate new service worker
+})
+```
+
+This allows the app to force an update when needed:
+
+```typescript
+// Frontend: Force service worker update
+if ('serviceWorker' in navigator) {
+  const registration = await navigator.serviceWorker.ready
+  registration.active?.postMessage({ type: 'SKIP_WAITING' })
+}
+```
+
+## Troubleshooting
+
+<Accordion title="App not installing">
+  - Ensure you're using HTTPS (required for PWA)
+  - Check that manifest.json is accessible
+  - Verify service worker is registering (check DevTools → Application → Service Workers)
+  - Try a different browser (Chromium-based browsers have best support)
+</Accordion>
+
+<Accordion title="Offline mode not working">
+  - Check service worker status in DevTools → Application → Service Workers
+  - Verify cache storage in DevTools → Application → Cache Storage
+  - Ensure you loaded the pages while online first
+  - API calls intentionally do NOT work offline (by design)
+</Accordion>
+
+<Accordion title="Updates not appearing">
+  - Close all tabs running Home Account
+  - Open a new tab and navigate to the app
+  - Check DevTools → Application → Service Workers for update status
+  - Try hard refresh (Ctrl+Shift+R or Cmd+Shift+R)
+</Accordion>
+
+<Accordion title="Icon not appearing (iOS)">
+  - Ensure all icon sizes are present in /public/
+  - Check apple-touch-icon.png is accessible
+  - Icons must be square and properly sized
+  - Try clearing Safari cache and re-installing
+</Accordion>
+
+<Accordion title="Cache taking up too much space">
+  - Caches automatically expire after set time periods
+  - `purgeOnQuotaError: true` clears cache if storage is full
+  - Users can manually clear cache in browser settings
+  - Consider reducing `maxEntries` values in ExpirationPlugin
+</Accordion>
+
+## Best Practices
+
+<Accordion title="For End Users">
+  - Install the PWA for the best experience
+  - Keep the app updated by closing and reopening periodically
+  - Load pages while online to cache them for offline use
+  - Remember that transaction data requires internet
+</Accordion>
+
+<Accordion title="For Developers">
+  - Test PWA installation on real devices, not just emulators
+  - Use Lighthouse to audit PWA readiness
+  - Version your caches when making breaking changes
+  - Don't cache API responses (keep data fresh)
+  - Test offline scenarios thoroughly
+</Accordion>
+
+<Accordion title="Performance Optimization">
+  - Use CacheFirst for immutable assets (hashed filenames)
+  - Use NetworkFirst for pages that change frequently
+  - Set appropriate `maxAgeSeconds` for each asset type
+  - Enable `navigationPreload` to speed up first paint
+  - Precache critical assets using `__SW_MANIFEST`
+</Accordion>

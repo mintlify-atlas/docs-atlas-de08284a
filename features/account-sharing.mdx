@@ -1,0 +1,526 @@
+---
+title: 'Account Sharing'
+description: 'Invite family members to shared accounts with secure encryption key sharing'
+---
+
+## Overview
+
+Account Sharing allows account owners to invite family members to access their financial accounts. The system uses **secure invitation links** that transfer encrypted account keys, enabling invited users to decrypt and view shared transaction data.
+
+<Info>
+  Only account owners can invite new members. Invited members receive full read/write access to the shared account.
+</Info>
+
+## Invitation Structure
+
+Invitations contain the necessary information to grant access:
+
+```typescript backend/models/invitations/index.ts
+export type InvitationStatus = 'pending' | 'accepted' | 'expired' | 'revoked'
+
+export interface Invitation {
+  id: string
+  account_id: string
+  invited_by: string
+  email: string
+  token: string
+  status: InvitationStatus
+  invited_user_id: string | null
+  expires_at: Date
+  created_at: Date
+  accepted_at: Date | null
+}
+
+export interface InvitationWithDetails extends Invitation {
+  account_name: string
+  invited_by_name: string
+  invited_by_email: string
+  encrypted_key: string | null // Account Key cifrada para transferir al invitado
+}
+```
+
+### Invitation Fields
+
+- **token**: Unique token used in the invitation link
+- **email**: Email address of the invited user
+- **encrypted_key**: The account's encryption key, encrypted for the invited user
+- **status**: Current state of the invitation
+- **expires_at**: Expiration timestamp (typically 7 days from creation)
+
+## Creating Invitations
+
+### Server-Side: Invitation Controller
+
+Only account owners can create invitations:
+
+```typescript backend/controllers/invitations/invitation-controller.ts
+export class InvitationController {
+  /**
+   * POST /accounts/:id/invitations
+   * Crear invitación (solo owner)
+   */
+  static async create(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id: accountId } = req.params
+      const { email, encryptedKey } = req.body
+      const userId = req.user!.id
+
+      if (!email) {
+        return res.status(400).json({ error: 'Email es requerido' })
+      }
+
+      // Verificar que es owner
+      const role = await AccountRepository.getUserRole(accountId, userId)
+      if (role !== 'owner') {
+        return res.status(403).json({ error: 'Solo el propietario puede invitar miembros' })
+      }
+
+      const invitation = await InvitationRepository.create({
+        accountId,
+        invitedBy: userId,
+        email,
+        encryptedKey,
+      })
+
+      res.status(201).json({
+        invitation,
+        inviteLink: `/invite/${invitation.token}`,
+      })
+    } catch (error: any) {
+      if (error.message === 'Este usuario ya es miembro de la cuenta') {
+        return res.status(400).json({ error: error.message })
+      }
+      next(error)
+    }
+  }
+}
+```
+
+### API Endpoint
+
+```http
+POST /api/accounts/:accountId/invitations
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "email": "family@example.com",
+  "encryptedKey": "base64-encrypted-account-key"
+}
+```
+
+<Accordion title="Encrypted Key Format">
+  The `encryptedKey` field contains the account's encryption key, encrypted using a secret derived from the invitation token. This ensures that only the person with the invitation link can decrypt the key.
+  
+  **Encryption Flow:**
+  1. Owner's client retrieves the account encryption key from local storage
+  2. Client generates a random invitation secret
+  3. Client encrypts the account key using the invitation secret
+  4. Client sends the encrypted key to the server
+  5. Server creates invitation with token that can derive the secret
+  6. Invited user's client uses token to derive secret and decrypt the key
+</Accordion>
+
+## Viewing Invitations
+
+### List Invitations for an Account
+
+```typescript backend/controllers/invitations/invitation-controller.ts
+static async list(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id: accountId } = req.params
+    const userId = req.user!.id
+
+    // Verificar acceso a la cuenta
+    const hasAccess = await AccountRepository.hasAccess(accountId, userId)
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'No tienes acceso a esta cuenta' })
+    }
+
+    const invitations = await InvitationRepository.getByAccountId(accountId)
+
+    res.json({ invitations })
+  } catch (error) {
+    next(error)
+  }
+}
+```
+
+### Get Invitation by Token (Public)
+
+This endpoint is public (no authentication required) so invited users can view invitation details:
+
+```typescript backend/controllers/invitations/invitation-controller.ts
+static async getByToken(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { token } = req.params
+
+    const invitation = await InvitationRepository.getByToken(token)
+
+    if (!invitation) {
+      return res.status(404).json({ error: 'Invitación no encontrada' })
+    }
+
+    // Verificar si expiró
+    const isExpired =
+      invitation.status === 'expired' || new Date(invitation.expires_at) < new Date()
+
+    res.json({
+      invitation: {
+        status: isExpired ? 'expired' : invitation.status,
+        account_id: invitation.account_id,
+        account_name: invitation.account_name,
+        invited_by_name: invitation.invited_by_name,
+        expires_at: invitation.expires_at,
+        encrypted_key: invitation.encrypted_key,
+      },
+      isExpired,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+```
+
+<Note>
+  The invitation includes the `encrypted_key` which the invited user's client will decrypt using the token to gain access to the shared account.
+</Note>
+
+## Accepting Invitations
+
+### Accept Invitation
+
+Invited users accept invitations to gain account access:
+
+```typescript backend/controllers/invitations/invitation-controller.ts
+static async accept(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { token } = req.params
+    const userId = req.user!.id
+
+    const invitation = await InvitationRepository.accept({
+      token,
+      userId,
+    })
+
+    res.json({
+      message: 'Invitación aceptada',
+      invitation,
+      account: {
+        id: invitation.account_id,
+        name: '',
+      },
+    })
+  } catch (error: any) {
+    if (
+      error.message.includes('no encontrada') ||
+      error.message.includes('expirado') ||
+      error.message.includes('ya fue') ||
+      error.message.includes('Ya eres miembro')
+    ) {
+      return res.status(400).json({ error: error.message })
+    }
+    next(error)
+  }
+}
+```
+
+### API Endpoint
+
+```http
+POST /api/invitations/:token/accept
+Authorization: Bearer <token>
+```
+
+<Steps>
+  <Step title="User Receives Link">
+    The owner sends an invitation link like `https://app.example.com/invite/abc123xyz` to the invited user via email or messaging.
+  </Step>
+  
+  <Step title="View Invitation Details">
+    The invited user clicks the link and sees invitation details (account name, who invited them, expiration date).
+  </Step>
+  
+  <Step title="Accept Invitation">
+    If not logged in, the user is prompted to sign up or log in. Once authenticated, they accept the invitation.
+  </Step>
+  
+  <Step title="Decrypt Account Key">
+    The client decrypts the account key using the invitation token and stores it securely for future use.
+  </Step>
+  
+  <Step title="Access Shared Account">
+    The user now has full access to the shared account and can view all encrypted transactions.
+  </Step>
+</Steps>
+
+## Managing Invitations
+
+### Update Invitation Encryption Key
+
+Owners can update the encrypted key on an existing invitation:
+
+```typescript backend/controllers/invitations/invitation-controller.ts
+static async updateKey(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id: accountId, invitationId } = req.params
+    const { encryptedKey } = req.body
+    const userId = req.user!.id
+
+    if (!encryptedKey) {
+      return res.status(400).json({ error: 'encryptedKey es requerido' })
+    }
+
+    // Verificar que es owner
+    const role = await AccountRepository.getUserRole(accountId, userId)
+    if (role !== 'owner') {
+      return res.status(403).json({ error: 'Solo el propietario puede actualizar invitaciones' })
+    }
+
+    await InvitationRepository.updateEncryptedKey(invitationId, accountId, encryptedKey)
+
+    res.json({ success: true })
+  } catch (error) {
+    next(error)
+  }
+}
+```
+
+### Revoke Invitation
+
+Owners can revoke pending invitations:
+
+```typescript backend/controllers/invitations/invitation-controller.ts
+static async revoke(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id: accountId, invitationId } = req.params
+    const userId = req.user!.id
+
+    // Verificar que es owner
+    const role = await AccountRepository.getUserRole(accountId, userId)
+    if (role !== 'owner') {
+      return res.status(403).json({ error: 'Solo el propietario puede revocar invitaciones' })
+    }
+
+    const revoked = await InvitationRepository.revoke(invitationId, accountId)
+
+    if (!revoked) {
+      return res.status(404).json({ error: 'Invitación no encontrada o ya procesada' })
+    }
+
+    res.json({ message: 'Invitación revocada' })
+  } catch (error) {
+    next(error)
+  }
+}
+```
+
+<Warning>
+  Revoking an invitation prevents it from being accepted, but does not remove access from users who have already accepted. To remove a user's access, you must remove them from the account members list separately.
+</Warning>
+
+## API Routes
+
+### Public Routes (No Authentication)
+
+```typescript backend/routes/invitations/invitation-routes.ts
+const router: Router = Router()
+
+// GET /invitations/:token - Ver info de invitación
+router.get('/:token', InvitationController.getByToken)
+```
+
+### Protected Routes (Authentication Required)
+
+```typescript backend/routes/invitations/invitation-routes.ts
+// POST /invitations/:token/accept - Aceptar invitación
+router.post('/:token/accept', authenticateToken, InvitationController.accept)
+```
+
+### Account-Specific Routes
+
+These routes are typically mounted under `/api/accounts/:id/invitations`:
+
+```typescript
+// POST /accounts/:id/invitations - Create invitation (owner only)
+router.post('/', authenticateToken, checkCSRF, InvitationController.create)
+
+// GET /accounts/:id/invitations - List invitations (members)
+router.get('/', authenticateToken, InvitationController.list)
+
+// PATCH /accounts/:id/invitations/:invitationId/key - Update key (owner only)
+router.patch('/:invitationId/key', authenticateToken, checkCSRF, InvitationController.updateKey)
+
+// DELETE /accounts/:id/invitations/:invitationId - Revoke (owner only)
+router.delete('/:invitationId', authenticateToken, checkCSRF, InvitationController.revoke)
+```
+
+## Encryption Key Sharing Flow
+
+The secure key sharing mechanism works as follows:
+
+<Tabs>
+  <Tab title="Owner Side (Creating Invitation)">
+    ```typescript
+    // 1. Get account encryption key from crypto store
+    const accountKey = cryptoStore.getAccountKey(accountId)
+    
+    // 2. Generate invitation secret
+    const invitationSecret = generateRandomSecret()
+    
+    // 3. Encrypt account key with invitation secret
+    const encryptedKey = await encryptWithSecret(accountKey, invitationSecret)
+    
+    // 4. Create invitation with encrypted key
+    const invitation = await api.post('/invitations', {
+      email: invitedEmail,
+      encryptedKey,
+    })
+    
+    // 5. Share invitation link containing token
+    const inviteLink = `https://app.example.com/invite/${invitation.token}`
+    ```
+  </Tab>
+  
+  <Tab title="Invited User Side (Accepting)">
+    ```typescript
+    // 1. Fetch invitation details (includes encrypted key)
+    const invitation = await api.get(`/invitations/${token}`)
+    
+    // 2. Derive invitation secret from token
+    const invitationSecret = deriveSecretFromToken(token)
+    
+    // 3. Decrypt account key using secret
+    const accountKey = await decryptWithSecret(
+      invitation.encrypted_key,
+      invitationSecret
+    )
+    
+    // 4. Store decrypted key in crypto store
+    cryptoStore.storeAccountKey(accountId, accountKey)
+    
+    // 5. Accept invitation to gain account membership
+    await api.post(`/invitations/${token}/accept`)
+    
+    // 6. User can now access encrypted account data
+    ```
+  </Tab>
+</Tabs>
+
+## Invitation Statuses
+
+<CardGroup cols={2}>
+  <Card title="Pending" icon="clock">
+    Invitation has been created but not yet accepted. The invited user can still accept it.
+  </Card>
+  
+  <Card title="Accepted" icon="check">
+    Invitation has been accepted by the invited user. They now have access to the account.
+  </Card>
+  
+  <Card title="Expired" icon="calendar-xmark">
+    Invitation has passed its expiration date and can no longer be accepted.
+  </Card>
+  
+  <Card title="Revoked" icon="ban">
+    Invitation was manually revoked by the account owner and can no longer be accepted.
+  </Card>
+</CardGroup>
+
+## Data Transfer Objects
+
+### Create Invitation DTO
+
+```typescript backend/models/invitations/index.ts
+export interface CreateInvitationDTO {
+  accountId: string
+  invitedBy: string // userId del owner
+  email: string
+  encryptedKey?: string // Account Key cifrada con invitation secret
+}
+```
+
+### Accept Invitation DTO
+
+```typescript backend/models/invitations/index.ts
+export interface AcceptInvitationDTO {
+  token: string
+  userId: string // usuario que acepta
+}
+```
+
+## Security Considerations
+
+<Steps>
+  <Step title="Owner-Only Creation">
+    Only account owners can create invitations. The system verifies ownership before allowing invitation creation.
+  </Step>
+  
+  <Step title="Token-Based Security">
+    Invitation tokens are cryptographically random and serve as both the invitation identifier and key derivation input.
+  </Step>
+  
+  <Step title="Time-Limited Access">
+    Invitations expire after a set period (typically 7 days) to limit the window of vulnerability.
+  </Step>
+  
+  <Step title="One-Time Use">
+    Once accepted, an invitation cannot be reused. The encrypted key is only transferred once.
+  </Step>
+  
+  <Step title="Secure Key Transfer">
+    The account key is never transmitted in plaintext. It's always encrypted with the invitation secret.
+  </Step>
+</Steps>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Share Links Securely" icon="lock">
+    Send invitation links through secure channels (email, encrypted messaging) rather than public posts.
+  </Card>
+  
+  <Card title="Monitor Active Invitations" icon="eye">
+    Regularly review pending invitations and revoke any that are no longer needed.
+  </Card>
+  
+  <Card title="Verify Email Addresses" icon="envelope-circle-check">
+    Double-check the invited user's email address before creating invitations to prevent accidental access grants.
+  </Card>
+  
+  <Card title="Set Appropriate Expiration" icon="hourglass">
+    Use shorter expiration periods for sensitive accounts and longer periods for trusted family members.
+  </Card>
+</CardGroup>
+
+## Common Workflows
+
+### Inviting a Family Member
+
+```typescript
+// Owner invites spouse to joint account
+const invitation = await createInvitation({
+  accountId: jointAccountId,
+  email: 'spouse@example.com',
+  encryptedKey: await encryptAccountKey(accountKey, invitationSecret),
+})
+
+// Share link with spouse
+const inviteLink = `${appUrl}/invite/${invitation.token}`
+sendEmail(invitation.email, 'You\'re invited to our joint account!', inviteLink)
+```
+
+### Revoking an Old Invitation
+
+```typescript
+// Owner revokes expired invitation that was never accepted
+const invitations = await getAccountInvitations(accountId)
+const oldInvitation = invitations.find(inv => 
+  inv.status === 'pending' && 
+  isOlderThan(inv.created_at, '30 days')
+)
+
+if (oldInvitation) {
+  await revokeInvitation(accountId, oldInvitation.id)
+}
+```

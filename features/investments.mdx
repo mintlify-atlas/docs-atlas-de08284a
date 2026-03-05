@@ -1,0 +1,613 @@
+---
+title: 'Investments'
+description: 'AI-powered investment recommendations, risk profiling, and an interactive investment assistant'
+---
+
+## Overview
+
+The Investment module provides AI-powered financial guidance, helping users make informed investment decisions based on their financial situation, risk tolerance, and goals. It includes risk profiling, personalized recommendations, market data integration, and an interactive chat assistant.
+
+<Info>
+  The Investment AI uses your transaction history to calculate financial metrics like savings capacity, income trends, and spending patterns to provide personalized advice.
+</Info>
+
+## Investment Profile Structure
+
+Each account can have an investment profile that stores user preferences:
+
+```typescript backend/services/ai/prompts/types.ts
+export interface InvestmentContext {
+  accountId: string
+  userId: string
+  avgMonthlyIncome: number
+  avgMonthlyExpenses: number
+  savingsCapacity: number
+  savingsRate: number
+  emergencyFundCurrent: number
+  emergencyFundGoal: number
+  historicalMonths: number
+  trend: 'stable' | 'improving' | 'declining'
+  deficitMonths: number
+  investmentPercentage: number
+  horizonYears: number
+  experienceLevel: 'none' | 'basic' | 'intermediate' | 'advanced'
+  transactionCategories: Record<string, number>
+  recentTransactions: any[]
+}
+```
+
+## Risk Profile Questionnaire
+
+Users complete a questionnaire to determine their investment risk profile:
+
+### Profile Assessment
+
+```typescript backend/controllers/investment/investment-controller.ts
+export const analyzeProfile = asyncHandler(async (req: Request, res: Response) => {
+  const { accountId } = req.params
+  const userId = (req as any).user?.id
+  const answers = req.body as ProfileAnswers
+
+  if (!userId) {
+    throw new AppError('No autorizado', 401)
+  }
+
+  const hasAccess = await AccountRepository.hasAccess(accountId, userId)
+  if (!hasAccess) {
+    throw new AppError('No tienes acceso a esta cuenta', 403)
+  }
+
+  const validation = ProfileAnswersSchema.safeParse(answers)
+
+  if (!validation.success) {
+    const errors = validation.error.format()
+    const fieldErrors: string[] = []
+    for (const [field, err] of Object.entries(errors)) {
+      if (field !== '_errors' && err && typeof err === 'object' && '_errors' in err) {
+        const messages = (err as any)._errors
+        if (messages?.length) {
+          fieldErrors.push(`${field}: ${messages.join(', ')}`)
+        }
+      }
+    }
+
+    throw new AppError(
+      fieldErrors.length > 0
+        ? `Campos inválidos: ${fieldErrors.join('; ')}`
+        : 'Datos de perfil inválidos',
+      400
+    )
+  }
+
+  const validAnswers = validation.data
+
+  const financialContext = await getAccountFinancialContext(accountId, userId)
+
+  if (validAnswers.financialMetrics) {
+    const fm = validAnswers.financialMetrics
+    financialContext.avgMonthlyIncome = fm.avgMonthlyIncome
+    financialContext.avgMonthlyExpenses = fm.avgMonthlyExpenses
+    financialContext.savingsCapacity = fm.savingsCapacity
+    financialContext.savingsRate = fm.savingsRate
+    financialContext.historicalMonths = fm.historicalMonths
+    financialContext.trend = fm.trend
+    financialContext.deficitMonths = fm.deficitMonths
+  }
+
+  const ai = createInvestmentAI()
+  if (!ai.isAvailable()) {
+    throw new AppError('IA no disponible', 503)
+  }
+
+  const result = await ai.assessProfile(answers, financialContext)
+
+  const profileMap: Record<string, 'conservative' | 'balanced' | 'dynamic'> = {
+    conservador: 'conservative',
+    conservative: 'conservative',
+    equilibrado: 'balanced',
+    balanced: 'balanced',
+    dinámico: 'dynamic',
+    dinamico: 'dynamic',
+    dynamic: 'dynamic',
+    agresivo: 'dynamic',
+    aggressive: 'dynamic',
+  }
+
+  const dbProfile = profileMap[result.recommendedProfile?.toLowerCase()] || 'balanced'
+
+  const horizonYearsMap: Record<string, number> = {
+    '<3': 2,
+    '3-10': 5,
+    '>10': 15,
+  }
+  const horizonYearsNum = horizonYearsMap[answers.horizonYears] || 5
+
+  await InvestmentRepository.upsertProfile({
+    account_id: accountId,
+    risk_profile: dbProfile,
+    investment_percentage: result.investmentPercentage,
+    has_emergency_fund: answers.hasEmergencyFund !== 'no',
+    experience_level: answers.experienceLevel,
+    horizon_years: horizonYearsNum,
+  })
+
+  res.status(200).json({
+    success: true,
+    data: result,
+  })
+})
+```
+
+### API Endpoint
+
+```http
+POST /api/investment/:accountId/analyze-profile
+Content-Type: application/json
+
+{
+  "horizonYears": "3-10",
+  "hasEmergencyFund": "yes",
+  "experienceLevel": "basic",
+  "investmentPercentage": 20,
+  "financialMetrics": {
+    "avgMonthlyIncome": 3500,
+    "avgMonthlyExpenses": 2800,
+    "savingsCapacity": 700,
+    "savingsRate": 20,
+    "historicalMonths": 12,
+    "trend": "stable",
+    "deficitMonths": 0
+  }
+}
+```
+
+<Tabs>
+  <Tab title="Conservative Profile">
+    - Low risk tolerance
+    - Prioritizes capital preservation
+    - Shorter investment horizon (less than 3 years)
+    - Recommended: Bonds, savings accounts, conservative funds
+  </Tab>
+  
+  <Tab title="Balanced Profile">
+    - Moderate risk tolerance
+    - Balance between growth and stability
+    - Medium investment horizon (3-10 years)
+    - Recommended: Mixed portfolio of stocks and bonds
+  </Tab>
+  
+  <Tab title="Dynamic Profile">
+    - Higher risk tolerance
+    - Prioritizes growth potential
+    - Longer investment horizon (>10 years)
+    - Recommended: Growth stocks, emerging markets, equity funds
+  </Tab>
+</Tabs>
+
+## AI-Powered Recommendations
+
+Generate personalized investment recommendations based on user profile:
+
+```typescript backend/controllers/investment/investment-controller.ts
+export const getRecommendations = asyncHandler(async (req: Request, res: Response) => {
+  const { accountId } = req.params
+  const userId = (req as any).user?.id
+  const { profile, monthlyAmount, includeExplanation: _includeExplanation } = req.body
+
+  if (!userId) {
+    throw new AppError('No autorizado', 401)
+  }
+
+  const hasAccess = await AccountRepository.hasAccess(accountId, userId)
+  if (!hasAccess) {
+    throw new AppError('No tienes acceso a esta cuenta', 403)
+  }
+
+  const financialContext = await getAccountFinancialContext(accountId, userId)
+
+  const ai = createInvestmentAI()
+  if (!ai.isAvailable()) {
+    throw new AppError('IA no disponible', 503)
+  }
+
+  const monthlyInvest =
+    monthlyAmount ||
+    financialContext.savingsCapacity * (financialContext.investmentPercentage / 100)
+
+  const result = await ai.generateRecommendations(
+    profile ||
+      (financialContext.investmentPercentage <= 10
+        ? 'conservative'
+        : financialContext.investmentPercentage >= 30
+          ? 'dynamic'
+          : 'balanced'),
+    monthlyInvest,
+    financialContext
+  )
+
+  res.status(200).json({
+    success: true,
+    data: result,
+  })
+})
+```
+
+### Investment AI Service
+
+The AI service combines prompts with market data:
+
+```typescript backend/services/ai/investment-ai.ts
+export class InvestmentAI {
+  private client: AIClient
+
+  constructor(provider?: AIProviderType) {
+    this.client = createAIClient(provider)
+  }
+
+  isAvailable(): boolean {
+    return this.client.isAvailable()
+  }
+
+  async generateRecommendations(
+    profile: 'conservative' | 'balanced' | 'dynamic',
+    monthlyAmount: number,
+    context: InvestmentContext
+  ): Promise<RecommendationResult> {
+    const startTime = Date.now()
+
+    if (!this.isAvailable()) {
+      throw new AppError('AI not available', 503)
+    }
+
+    const marketData = await getMarketData()
+    const prompt = buildRecommendationPrompt(profile, monthlyAmount, context, marketData)
+
+    const response = await this.client.sendPromptJSON<RecommendationResult>(prompt)
+
+    const responseTime = Date.now() - startTime
+    await this.logInvestmentSession(
+      context.accountId || '',
+      context.userId || '',
+      'recommendation',
+      responseTime,
+      response
+    )
+
+    return response
+  }
+}
+```
+
+## Investment Chat Assistant
+
+An interactive AI assistant for investment questions:
+
+### Creating Chat Sessions
+
+```typescript backend/controllers/investment/investment-controller.ts
+export const createChatSession = asyncHandler(async (req: Request, res: Response) => {
+  const { accountId } = req.params
+  const userId = (req as any).user?.id
+
+  if (!userId) {
+    throw new AppError('No autorizado', 401)
+  }
+
+  const hasAccess = await AccountRepository.hasAccess(accountId, userId)
+  if (!hasAccess) {
+    throw new AppError('No tienes acceso a esta cuenta', 403)
+  }
+
+  const session = await InvestmentRepository.createChatSession({
+    account_id: accountId,
+    user_id: userId,
+    provider: getActiveProvider(),
+  })
+
+  res.status(200).json({
+    success: true,
+    data: {
+      sessionId: session.id,
+      provider: session.provider,
+      createdAt: session.created_at,
+    },
+  })
+})
+```
+
+### Sending Chat Messages
+
+```typescript backend/controllers/investment/investment-controller.ts
+export const sendChatMessage = asyncHandler(async (req: Request, res: Response) => {
+  const { accountId, sessionId } = req.params
+  const userId = (req as any).user?.id
+
+  if (!userId) {
+    throw new AppError('No autorizado', 401)
+  }
+
+  const validation = ChatMessageSchema.safeParse(req.body)
+  if (!validation.success) {
+    throw new AppError('Mensaje requerido', 400)
+  }
+
+  const { message } = validation.data
+
+  const securityCheck = await checkInputSecurity(userId, message, {
+    endpoint: '/chat/message',
+    sessionId,
+  })
+
+  if (!securityCheck.allowed) {
+    throw new AppError(securityCheck.blockReason || 'Mensaje no permitido', 400)
+  }
+
+  const safeMessage = securityCheck.sanitizedInput
+
+  const hasAccess = await AccountRepository.hasAccess(accountId, userId)
+  if (!hasAccess) {
+    throw new AppError('No tienes acceso a esta cuenta', 403)
+  }
+
+  const session = await InvestmentRepository.getChatSessionById(sessionId)
+  if (!session || session.account_id !== accountId) {
+    throw new AppError('Sesión no encontrada', 404)
+  }
+
+  const financialContext = await getAccountFinancialContext(accountId, userId)
+
+  const ai = createInvestmentAI()
+  if (!ai.isAvailable()) {
+    throw new AppError('IA no disponible. Verifica la configuración.', 503)
+  }
+
+  const result = await ai.chatWithSession(safeMessage, accountId, userId, financialContext)
+
+  const outputCheck = await checkOutputSecurity(userId, result.answer)
+  const safeReply = outputCheck.safe ? result.answer : outputCheck.sanitizedOutput
+
+  res.status(200).json({
+    success: true,
+    data: {
+      reply: safeReply,
+      relatedConcepts: result.relatedConcepts,
+      needsDisclaimer: result.needsDisclaimer,
+    },
+  })
+})
+```
+
+### Chat with Context
+
+```typescript backend/services/ai/investment-ai.ts
+async chatWithSession(
+  message: string,
+  accountId: string,
+  userId: string,
+  financialContext: InvestmentContext
+): Promise<ChatResult> {
+  logger.info('INVESTMENT_AI', 'chatWithSession', 'Starting')
+
+  let session = (await InvestmentRepository.getChatSessionsByAccount(accountId))[0]
+  logger.info('INVESTMENT_AI', 'chatWithSession', `Existing session: ${session?.id || 'none'}`)
+
+  if (!session || this.isSessionExpired(session.last_message_at)) {
+    logger.info('INVESTMENT_AI', 'chatWithSession', 'Creating new session')
+    session = await InvestmentRepository.createChatSession({
+      account_id: accountId,
+      user_id: userId,
+      provider: getActiveProvider(),
+    })
+    logger.info('INVESTMENT_AI', 'chatWithSession', `New session created: ${session.id}`)
+  }
+
+  const history = (await InvestmentRepository.getChatMessagesForContext(
+    session.id,
+    20
+  )) as ChatMessage[]
+  logger.info('INVESTMENT_AI', 'chatWithSession', `History messages: ${history.length}`)
+
+  logger.info('INVESTMENT_AI', 'chatWithSession', 'Getting market data')
+  const marketData = await getMarketData()
+  const investmentProfile = await InvestmentRepository.getProfileByAccountId(accountId)
+  logger.info(
+    'INVESTMENT_AI',
+    'chatWithSession',
+    `Market data ready, profile: ${investmentProfile?.risk_profile || 'none'}`
+  )
+
+  const chatContext: ChatContext = {
+    accountId,
+    financialSummary: {
+      avgMonthlyIncome: financialContext.avgMonthlyIncome,
+      savingsCapacity: financialContext.savingsCapacity,
+      savingsRate: financialContext.savingsRate,
+      emergencyFundCurrent: financialContext.emergencyFundCurrent,
+      emergencyFundGoal: financialContext.emergencyFundGoal,
+      historicalMonths: financialContext.historicalMonths,
+      trend: financialContext.trend,
+    },
+    investmentProfile: investmentProfile
+      ? {
+          risk_profile: investmentProfile.risk_profile,
+        }
+      : undefined,
+    marketPrices: marketData,
+  }
+
+  logger.info('INVESTMENT_AI', 'chatWithSession', 'Calling chat')
+  const result = await this.chat(message, chatContext, history, accountId, userId)
+  logger.info('INVESTMENT_AI', 'chatWithSession', 'Chat result received')
+
+  await InvestmentRepository.addChatMessage({
+    session_id: session.id,
+    role: 'user',
+    content: message,
+  })
+
+  await InvestmentRepository.addChatMessage({
+    session_id: session.id,
+    role: 'assistant',
+    content: result.answer,
+  })
+
+  const messageCount = history.length + 2
+  await InvestmentRepository.updateChatSession(session.id, messageCount)
+  logger.info('INVESTMENT_AI', 'chatWithSession', 'Messages saved, done')
+
+  return result
+}
+```
+
+<Note>
+  Chat sessions automatically expire after 30 minutes of inactivity. A new session is created when the user resumes chatting.
+</Note>
+
+## Market Data Integration
+
+The system integrates real-time market data for context-aware recommendations:
+
+```typescript backend/controllers/investment/investment-controller.ts
+export const getMarketPrices = asyncHandler(async (req: Request, res: Response) => {
+  const { accountId } = req.params
+  const userId = (req as any).user?.id
+
+  if (!userId) {
+    throw new AppError('No autorizado', 401)
+  }
+
+  const hasAccess = await AccountRepository.hasAccess(accountId, userId)
+  if (!hasAccess) {
+    throw new AppError('No tienes acceso a esta cuenta', 403)
+  }
+
+  const data = await getMarketDataFull()
+
+  res.status(200).json({
+    success: true,
+    data,
+  })
+})
+```
+
+## Education: Explaining Concepts
+
+Users can ask for explanations of investment concepts:
+
+```typescript backend/controllers/investment/investment-controller.ts
+export const explainConcept = asyncHandler(async (req: Request, res: Response) => {
+  const { accountId } = req.params
+  const userId = (req as any).user?.id
+  const { q } = req.query
+
+  if (!userId) {
+    throw new AppError('No autorizado', 401)
+  }
+
+  const hasAccess = await AccountRepository.hasAccess(accountId, userId)
+  if (!hasAccess) {
+    throw new AppError('No tienes acceso a esta cuenta', 403)
+  }
+
+  if (!q || typeof q !== 'string') {
+    throw new AppError('Concepto requerido (q)', 400)
+  }
+
+  const securityCheck = await checkInputSecurity(userId, q, {
+    endpoint: '/education',
+  })
+
+  if (!securityCheck.allowed) {
+    throw new AppError(securityCheck.blockReason || 'Consulta no permitida', 400)
+  }
+
+  const ai = createInvestmentAI()
+  if (!ai.isAvailable()) {
+    throw new AppError('IA no disponible', 503)
+  }
+
+  const result = await ai.explainConcept(securityCheck.sanitizedInput, 'beginner')
+
+  const outputCheck = await checkOutputSecurity(userId, result.explanation || '')
+
+  res.status(200).json({
+    success: true,
+    data: {
+      ...result,
+      explanation: outputCheck.safe ? result.explanation : outputCheck.sanitizedOutput,
+    },
+  })
+})
+```
+
+## API Routes
+
+All investment routes require authentication and some use AI rate limiting:
+
+```typescript backend/routes/investment/investment-routes.ts
+const router: Router = Router()
+
+router.use(authenticateToken)
+
+// Investment endpoints
+router.get('/:accountId/overview', getOverview)
+router.patch('/:accountId/emergency-fund-months', updateEmergencyFundMonths)
+router.patch('/:accountId/liquidity-reserve', updateLiquidityReserve)
+router.post('/:accountId/analyze-profile', aiRateLimiter(), analyzeProfile)
+router.post('/:accountId/recommendations', aiRateLimiter(), getRecommendations)
+router.get('/:accountId/market-prices', marketRateLimiter, getMarketPrices)
+
+// Chat endpoints
+router.get('/:accountId/chat/sessions', getChatSessions)
+router.post('/:accountId/chat/session', createChatSession)
+router.post('/:accountId/chat/:sessionId/message', aiRateLimiter(), sendChatMessage)
+router.get('/:accountId/chat/:sessionId/history', getChatHistory)
+router.delete('/:accountId/chat/:sessionId', deleteChatSession)
+
+// Education endpoint
+router.get('/:accountId/education', aiRateLimiter(), explainConcept)
+```
+
+<Warning>
+  AI endpoints are rate-limited to prevent abuse. Users have a limited number of AI requests per time period.
+</Warning>
+
+## Security Features
+
+<Steps>
+  <Step title="Input Security Checks">
+    All user inputs to AI endpoints are sanitized and checked for malicious content before processing.
+  </Step>
+  
+  <Step title="Output Security Checks">
+    AI responses are validated to ensure they don't contain harmful or inappropriate content.
+  </Step>
+  
+  <Step title="Rate Limiting">
+    AI endpoints use specialized rate limiting to prevent excessive API usage and costs.
+  </Step>
+  
+  <Step title="Session Management">
+    Chat sessions expire after 30 minutes and are associated with specific users and accounts.
+  </Step>
+</Steps>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Complete Profile First" icon="user-check">
+    Users should complete the risk profile questionnaire before requesting recommendations.
+  </Card>
+  
+  <Card title="Update Emergency Fund" icon="shield">
+    Keep emergency fund information current for accurate investment percentage calculations.
+  </Card>
+  
+  <Card title="Use Chat for Clarification" icon="comments">
+    The chat assistant can explain recommendations and answer follow-up questions.
+  </Card>
+  
+  <Card title="Monitor AI Availability" icon="heartbeat">
+    Check `ai.isAvailable()` before making AI calls and handle unavailability gracefully.
+  </Card>
+</CardGroup>

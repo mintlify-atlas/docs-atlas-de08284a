@@ -1,0 +1,180 @@
+---
+title: 'Delete Category'
+description: 'Delete a category and handle associated transactions'
+---
+
+## Endpoint
+
+```
+DELETE /api/categories/:id
+```
+
+Deletes a category. When a category is deleted, associated transactions will have their `subcategory_id` set to NULL automatically.
+
+## Authentication
+
+This endpoint requires authentication via Bearer token and CSRF protection.
+
+## Path Parameters
+
+<ParamField path="id" type="string" required>
+  The UUID of the category to delete.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the deletion was successful.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Confirmation message.
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X DELETE https://api.yourapp.com/api/categories/987fcdeb-51a2-43e7-9abc-123456789def \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "X-CSRF-Token: YOUR_CSRF_TOKEN"
+```
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "message": "Categoría eliminada correctamente"
+}
+```
+
+## Error Responses
+
+<ResponseField name="404" type="error">
+  Not Found - Category does not exist or user does not have access.
+  
+  ```json
+  {
+    "success": false,
+    "message": "Categoría no encontrada"
+  }
+  ```
+</ResponseField>
+
+## Related Endpoints
+
+### Get Orphaned Transaction Count
+
+Before deleting a category, you may want to check how many transactions will be affected:
+
+```
+GET /api/categories/:id/orphaned-count
+```
+
+#### Example Request
+
+```bash
+curl -X GET https://api.yourapp.com/api/categories/987fcdeb-51a2-43e7-9abc-123456789def/orphaned-count \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+#### Example Response
+
+```json
+{
+  "success": true,
+  "count": 15
+}
+```
+
+### Reassign Transactions
+
+To reassign transactions to another category before deletion:
+
+```
+POST /api/categories/:id/reassign
+```
+
+#### Request Body
+
+<ParamField body="to_category_id" type="string" required>
+  The UUID of the destination category to reassign transactions to. Must belong to the same account.
+</ParamField>
+
+#### Example Request
+
+```bash
+curl -X POST https://api.yourapp.com/api/categories/987fcdeb-51a2-43e7-9abc-123456789def/reassign \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: YOUR_CSRF_TOKEN" \
+  -d '{
+    "to_category_id": "456789ab-cdef-1234-5678-90abcdef1234"
+  }'
+```
+
+#### Example Response
+
+```json
+{
+  "success": true,
+  "message": "Transacciones reasignadas: 15",
+  "reassignedCount": 15
+}
+```
+
+#### Reassign Error Responses
+
+<ResponseField name="400" type="error">
+  Bad Request - Missing destination category or categories from different accounts.
+  
+  ```json
+  {
+    "success": false,
+    "message": "to_category_id es requerido"
+  }
+  ```
+  
+  or
+  
+  ```json
+  {
+    "success": false,
+    "message": "Categories must belong to the same account"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="404" type="error">
+  Not Found - Source or destination category not found.
+  
+  ```json
+  {
+    "success": false,
+    "message": "Source category not found"
+  }
+  ```
+  
+  or
+  
+  ```json
+  {
+    "success": false,
+    "message": "Destination category not found"
+  }
+  ```
+</ResponseField>
+
+## Recommended Workflow
+
+1. **Check orphaned count**: Use `GET /api/categories/:id/orphaned-count` to see how many transactions will be affected
+2. **Reassign if needed**: If transactions exist, use `POST /api/categories/:id/reassign` to move them to another category
+3. **Delete category**: Finally, use `DELETE /api/categories/:id` to remove the category
+
+## Notes
+
+- Deleting a category automatically sets `subcategory_id` to NULL for all associated transactions
+- The database uses `ON DELETE SET NULL` constraint for this behavior
+- Subcategories associated with the category are also deleted (cascade delete)
+- The user must own the category or have access to the associated account
+- Consider using the reassign endpoint to preserve transaction categorization

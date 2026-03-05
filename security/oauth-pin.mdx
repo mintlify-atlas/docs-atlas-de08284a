@@ -1,0 +1,619 @@
+---
+title: OAuth + PIN Security
+description: Why OAuth users need a PIN for end-to-end encryption and how it works
+---
+
+## The OAuth Encryption Problem
+
+OAuth (Google, GitHub) proves **who you are**, but it doesn't provide a **secret only you know**. For end-to-end encryption, we need something to derive your User Key from.
+
+### The Challenge
+
+```
+Traditional Password Login:
+  Password → Argon2id → User Key → Decrypt Account Keys ✅
+
+OAuth Login (Google/GitHub):
+  OAuth token → ??? → User Key → Decrypt Account Keys ❌
+                 ^
+                 No secret available!
+```
+
+<Warning>
+**Key Insight**: OAuth providers don't give us a password or secret we can use for encryption. We only get an access token that proves identity, not a cryptographic secret.
+</Warning>
+
+## The Solution: A PIN
+
+Home Account requires OAuth users to set a **6-8 digit PIN** that serves as the encryption secret.
+
+```
+OAuth (Google/GitHub) → JWT session (authentication)
+PIN (6-8 digits)      → User Key derivation (encryption)
+```
+
+### Why This Works
+
+<Steps>
+  <Step title="OAuth Handles Authentication">
+    Google/GitHub verifies your identity and establishes a session (JWT cookies).
+  </Step>
+  
+  <Step title="PIN Handles Encryption">
+    Your PIN is used to derive the User Key via Argon2id, enabling client-side decryption.
+  </Step>
+  
+  <Step title="Separation of Concerns">
+    Authentication (who you are) and encryption (what you can decrypt) are independent layers.
+  </Step>
+</Steps>
+
+## OAuth + PIN Flow
+
+### First-Time OAuth Login
+
+```
+OAuth Flow (New User):
+  |
+  1. Click "Continue with Google/GitHub"
+  |
+  2. OAuth provider redirects to callback with user profile
+  |
+  3. Backend creates user, generates session tokens (JWT)
+  |
+  4. Frontend redirects to /setup-pin
+  |
+  5. User enters 6-8 digit PIN
+  |
+  6. Frontend:
+     - Generates key_salt (random 256-bit hex)
+     - Derives UserKey = Argon2id(PIN, key_salt)
+     - Generates verification_blob (encrypted known plaintext)
+     - Creates AccountKey, encrypts with UserKey
+  |
+  7. Backend stores: key_salt, verification_blob, encrypted AccountKey
+  |
+  `-> Dashboard unlocked
+```
+
+### Returning OAuth User
+
+```
+OAuth Flow (Returning User):
+  |
+  1. Click "Continue with Google/GitHub"
+  |
+  2. OAuth provider redirects to callback
+  |
+  3. Backend finds existing user by oauth_id, generates session tokens
+  |
+  4. Frontend checks if user has encrypted keys
+  |
+  5. If keys exist:
+     |-> Redirect to /unlock
+     |-> User enters PIN
+     |-> Frontend:
+     |   - GET /auth/keys -> fetch key_salt, verification_blob, encrypted_keys
+     |   - UserKey = Argon2id(PIN, key_salt)
+     |   - Verify PIN: decrypt(verification_blob, UserKey) == KNOWN_PLAINTEXT
+     |   - Decrypt all AccountKeys
+     `-> Dashboard unlocked
+  |
+  6. If no keys exist:
+     `-> Redirect to /setup-pin (setup incomplete)
+```
+
+## Why 6-8 Digits?
+
+<Accordion title="Entropy vs. Usability">
+  **Entropy:**
+  - 6 digits: ~19.9 bits (1,000,000 combinations)
+  - 8 digits: ~26.6 bits (100,000,000 combinations)
+  
+  **Comparison:**
+  - Average password: ~40 bits
+  - Bitcoin private key: 256 bits
+  
+  **Why it's still secure:**
+  - Argon2id's memory-hard function (64 MB, 3 iterations, 4 threads) makes brute force expensive
+  - Rate limiting: 5 attempts → 30 minute lockout
+  - Server-side validation prevents offline attacks
+</Accordion>
+
+### UX Benefits
+
+| Feature | PIN | Password |
+|---------|-----|----------|
+| **Typing speed** | Fast (numeric keypad) | Slow (full keyboard) |
+| **Mobile UX** | Native numeric keyboard | Full keyboard |
+| **Memorability** | Easy (6-8 digits) | Hard (12+ chars) |
+| **Security** | Argon2id compensates | Strong if long |
+
+<Info>
+**Mobile-first design**: PINs are significantly faster to enter on mobile devices, which is critical for a PWA (Progressive Web App).
+</Info>
+
+## Argon2id Parameters for PINs
+
+Because PINs have lower entropy than passwords, we use the same **OWASP-recommended** Argon2id parameters:
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `t` (iterations) | 3 | Time cost |
+| `m` (memory) | 65536 | 64 MB memory cost |
+| `p` (parallelism) | 4 | 4 threads |
+| `dkLen` | 32 | 256-bit output |
+
+```typescript
+// frontend/lib/crypto.ts
+
+const ARGON2_OPTIONS = {
+  t: 3,        // iterations
+  m: 65536,    // 64 MB memory
+  p: 4,        // parallelism
+}
+
+export async function deriveUserKey(password: string, saltHex: string): Promise<CryptoKey> {
+  const salt = hexToBytes(saltHex)
+  const passwordBytes = utf8ToBytes(password)  // PIN or password
+
+  const derivedBytes = argon2id(passwordBytes, salt, {
+    ...ARGON2_OPTIONS,
+    dkLen: 32,
+  })
+
+  return crypto.subtle.importKey(
+    'raw',
+    toArrayBuffer(derivedBytes),
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  )
+}
+```
+
+<Note>
+**Same function, different input**: The `deriveUserKey` function works identically for PINs and passwords. The security model adjusts for lower PIN entropy through rate limiting and server-side controls.
+</Note>
+
+## PIN Verification Blob
+
+To verify a PIN without decrypting all AccountKeys (expensive), we use a **verification blob**.
+
+### How It Works
+
+```typescript
+// frontend/lib/crypto.ts
+
+const VERIFICATION_PLAINTEXT = 'HOME_ACCOUNT_VERIFIED_2026'
+
+/**
+ * Generate verification blob by encrypting a known plaintext with UserKey.
+ * Stored in DB. At unlock, we decrypt:
+ * - If result == VERIFICATION_PLAINTEXT → PIN correct
+ * - If AES-GCM fails → PIN incorrect
+ */
+export async function generateVerificationBlob(userKey: CryptoKey): Promise<string> {
+  return encrypt(VERIFICATION_PLAINTEXT, userKey)
+}
+
+/**
+ * Verify if a PIN/password is correct by decrypting the blob.
+ */
+export async function verifyUserKey(
+  verificationBlob: string,
+  userKey: CryptoKey
+): Promise<boolean> {
+  try {
+    const result = await decrypt(verificationBlob, userKey)
+    return result === VERIFICATION_PLAINTEXT
+  } catch {
+    return false  // AES-GCM decryption failed
+  }
+}
+```
+
+### Benefits
+
+1. **Fast verification**: Decrypt one blob (~1ms) vs. all AccountKeys (~10ms)
+2. **Early failure**: Reject wrong PIN before expensive operations
+3. **User feedback**: Show "Incorrect PIN" immediately
+
+## Rate Limiting & Lockout
+
+<Warning>
+**Security Mechanism**: After 5 failed PIN attempts, the account is locked for 30 minutes to prevent brute force attacks.
+</Warning>
+
+### Implementation
+
+```typescript
+// backend/repositories/auth/user-repository.ts
+
+export async function recordFailedPinAttempt(userId: string): Promise<{
+  attempts: number
+  locked: boolean
+  lockedUntil: string | null
+}> {
+  const [rows] = await db.query<UserRow[]>(
+    `SELECT pin_attempts, pin_locked_until FROM users WHERE id = ?`,
+    [userId]
+  )
+
+  const user = rows[0]
+  if (!user) throw new AppError('User not found', 404)
+
+  const attempts = (user.pin_attempts || 0) + 1
+  const MAX_ATTEMPTS = 5
+
+  if (attempts >= MAX_ATTEMPTS) {
+    const lockedUntil = new Date(Date.now() + 30 * 60 * 1000) // 30 minutes
+    await db.query(
+      `UPDATE users SET pin_attempts = ?, pin_locked_until = ? WHERE id = ?`,
+      [attempts, lockedUntil, userId]
+    )
+
+    return {
+      attempts,
+      locked: true,
+      lockedUntil: lockedUntil.toISOString(),
+    }
+  }
+
+  await db.query(
+    `UPDATE users SET pin_attempts = ? WHERE id = ?`,
+    [attempts, userId]
+  )
+
+  return {
+    attempts,
+    locked: false,
+    lockedUntil: null,
+  }
+}
+```
+
+### Client-Side Handling
+
+```typescript
+// Example unlock flow with rate limiting
+
+const handleUnlock = async (pin: string) => {
+  try {
+    // 1. Derive UserKey from PIN
+    const userKey = await deriveUserKey(pin, keySalt)
+    
+    // 2. Verify PIN using verification blob
+    const isValid = await verifyUserKey(verificationBlob, userKey)
+    
+    if (!isValid) {
+      // Record failed attempt
+      const res = await fetch('/api/auth/record-failed-pin', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'x-csrf-token': csrfToken },
+      })
+      
+      const data = await res.json()
+      
+      if (data.locked) {
+        throw new Error(`Too many attempts. Locked until ${data.lockedUntil}`)
+      }
+      
+      throw new Error(`Incorrect PIN. ${5 - data.attempts} attempts remaining.`)
+    }
+    
+    // 3. Reset attempts on success
+    await fetch('/api/auth/reset-pin-attempts', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'x-csrf-token': csrfToken },
+    })
+    
+    // 4. Decrypt AccountKeys
+    await cryptoStore.unlockAccounts(encryptedKeys)
+    
+    router.push('/dashboard')
+  } catch (error) {
+    console.error('Unlock failed:', error)
+  }
+}
+```
+
+## Backend Implementation
+
+<Accordion title="OAuth Controller: Callback Handler">
+```typescript
+// backend/controllers/auth/oauth-controller.ts
+
+import { generateAccessToken, generateRefreshToken } from '../../services/auth/tokenService.js'
+import { generateCSRFToken } from '../../services/auth/csrfService.js'
+
+export const oauthCallback = asyncHandler(async (req: Request, res: Response) => {
+  const profile = req.user as OAuthProfile
+
+  if (!profile || !profile.email) {
+    logger.warn('AUTH', 'oauthCallback', 'OAuth callback without valid profile', { profile })
+    res.redirect(`${FRONTEND_URL}/login?error=oauth_invalid`)
+    return
+  }
+
+  logger.info('AUTH', 'oauthCallback', `OAuth login: ${profile.provider}`, { email: profile.email })
+
+  let user = await UserRepository.getByOAuth(profile.provider, profile.id)
+  let isNewUser = false
+
+  if (!user) {
+    const existingByEmail = await UserRepository.getByEmailForOAuth(profile.email)
+
+    if (existingByEmail) {
+      // Link OAuth to existing account
+      await UserRepository.linkOAuth(existingByEmail.id, {
+        provider: profile.provider,
+        oauthId: profile.id,
+        avatar: profile.avatar,
+      })
+      user = { ...existingByEmail, oauth_provider: profile.provider }
+    } else {
+      // Create new OAuth user
+      user = await UserRepository.createOAuth({
+        email: profile.email,
+        name: profile.name,
+        provider: profile.provider,
+        oauthId: profile.id,
+        avatar: profile.avatar,
+      })
+      isNewUser = true
+    }
+  }
+
+  const accessToken = await generateAccessToken({ id: user.id, email: user.email })
+  const refreshToken = await generateRefreshToken({ id: user.id, email: user.email })
+  const csrfToken = generateCSRFToken()
+
+  logger.info('AUTH', 'oauthCallback', 'OAuth session established', {
+    userId: user.id,
+    isNewUser,
+    hasKeySalt: !!user.key_salt,
+  })
+
+  // Build token params for cross-domain transfer
+  const tokenParams = new URLSearchParams({
+    accessToken,
+    refreshToken,
+    csrfToken,
+  })
+
+  let finalRedirect: string
+  if (isNewUser) {
+    finalRedirect = `/setup-pin?csrf=${csrfToken}`
+  } else {
+    const hasEncryption = await AccountKeyRepository.userHasKeys(user.id)
+    if (hasEncryption) {
+      finalRedirect = `/unlock?csrf=${csrfToken}`
+    } else {
+      finalRedirect = `/setup-pin?csrf=${csrfToken}`
+    }
+  }
+
+  tokenParams.set('redirect', finalRedirect)
+  res.redirect(`${FRONTEND_URL}/auth-callback?${tokenParams.toString()}`)
+})
+```
+</Accordion>
+
+<Accordion title="OAuth Config: Passport Strategies">
+```typescript
+// backend/config/oauth.ts
+
+import passport from 'passport'
+import { Strategy as GoogleStrategy } from 'passport-google-oauth20'
+import { Strategy as GitHubStrategy } from 'passport-github2'
+
+export function configureOAuth(): void {
+  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'mock_google_client_id'
+  const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'mock_google_client_secret'
+  const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || 'mock_github_client_id'
+  const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || 'mock_github_client_secret'
+  const CALLBACK_BASE = process.env.OAUTH_CALLBACK_URL || 'http://localhost:3001'
+
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: GOOGLE_CLIENT_ID,
+        clientSecret: GOOGLE_CLIENT_SECRET,
+        callbackURL: `${CALLBACK_BASE}/api/auth/google/callback`,
+        scope: ['profile', 'email'],
+      },
+      (_accessToken, _refreshToken, profile, done) => {
+        const oauthProfile: OAuthProfile = {
+          provider: 'google',
+          id: profile.id,
+          email: profile.emails?.[0]?.value || '',
+          name: profile.displayName,
+          avatar: profile.photos?.[0]?.value,
+        }
+        done(null, oauthProfile)
+      }
+    )
+  )
+
+  passport.use(
+    new GitHubStrategy(
+      {
+        clientID: GITHUB_CLIENT_ID,
+        clientSecret: GITHUB_CLIENT_SECRET,
+        callbackURL: `${CALLBACK_BASE}/api/auth/github/callback`,
+        scope: ['user:email'],
+      },
+      (_accessToken, _refreshToken, profile, done) => {
+        const oauthProfile: OAuthProfile = {
+          provider: 'github',
+          id: profile.id,
+          email: profile.emails?.[0]?.value || `${profile.username}@github.local`,
+          name: profile.displayName || profile.username,
+          avatar: profile.photos?.[0]?.value,
+        }
+        done(null, oauthProfile)
+      }
+    )
+  )
+
+  passport.serializeUser((user: any, done) => done(null, user))
+  passport.deserializeUser((user: any, done) => done(null, user))
+}
+```
+</Accordion>
+
+## Changing Your PIN
+
+Users can change their PIN at any time. This requires re-encrypting all AccountKeys.
+
+```typescript
+// backend/controllers/auth/auth-controller.ts
+
+export const changePin = asyncHandler(async (req: Request, res: Response) => {
+  const { currentPassword, newPin, newKeySalt, verificationBlob, reEncryptedKeys } = req.body
+
+  // Validate current password (OAuth users with linked password)
+  // OR validate current PIN (OAuth users without password)
+  
+  await UserRepository.changePin(
+    req.user!.id,
+    currentPassword,
+    newPin,
+    newKeySalt,
+    verificationBlob,
+    reEncryptedKeys
+  )
+
+  // Force re-login with new PIN
+  res.clearCookie('accessToken', { path: '/' })
+  res.clearCookie('refreshToken', { path: '/' })
+  res.clearCookie('csrfToken', { path: '/' })
+
+  res.status(200).json({
+    success: true,
+    message: 'PIN changed successfully. Please log in again.',
+  })
+})
+```
+
+<Note>
+Changing your PIN requires re-encrypting all AccountKeys with the new UserKey. This is done atomically in a database transaction to prevent data loss.
+</Note>
+
+## Recovery for OAuth Users
+
+OAuth users **must** set up a BIP39 recovery phrase because they don't have a password to fall back on.
+
+<Warning>
+**Critical for OAuth**: Without a recovery phrase, losing your PIN means **permanent data loss**. The email reset flow won't help OAuth users because there's no password to reset.
+</Warning>
+
+See the [Password Recovery](/security/password-recovery) guide for setting up BIP39 recovery.
+
+## Security Comparison
+
+| Scenario | Password Login | OAuth + PIN |
+|----------|----------------|-------------|
+| **Authentication** | Email + password → bcrypt | OAuth provider → JWT |
+| **Encryption** | Password → Argon2id → UserKey | PIN → Argon2id → UserKey |
+| **Brute Force** | Rate limited (7 attempts/15min) | Rate limited (5 attempts/30min) |
+| **Recovery** | Email reset OR BIP39 | BIP39 only (no password to reset) |
+| **Entropy** | ~40 bits (typical) | ~20-27 bits (6-8 digits) |
+| **Argon2id Cost** | Same (t=3, m=64MB, p=4) | Same (t=3, m=64MB, p=4) |
+
+<Info>
+**Key Takeaway**: OAuth + PIN provides equivalent security to password login when combined with rate limiting and Argon2id's memory-hard function.
+</Info>
+
+## API Endpoints
+
+### OAuth Flow
+
+```bash
+# Initiate OAuth (redirects to provider)
+GET /api/auth/google
+GET /api/auth/github
+```
+
+```bash
+# OAuth callback (handled by backend)
+GET /api/auth/google/callback?code=...
+GET /api/auth/github/callback?code=...
+```
+
+### PIN Management
+
+```bash
+# Save verification blob (after setup-pin)
+POST /api/auth/verification-blob
+Content-Type: application/json
+
+{
+  "verificationBlob": "base64_encrypted_blob..."
+}
+```
+
+```bash
+# Change PIN (authenticated)
+POST /api/auth/change-pin
+Content-Type: application/json
+
+{
+  "currentPassword": "old_pin_or_password",
+  "newPin": "12345678",
+  "newKeySalt": "new_salt_hex...",
+  "verificationBlob": "new_verification_blob...",
+  "reEncryptedKeys": [
+    { "accountId": "acc-001", "encryptedKey": "..." }
+  ]
+}
+```
+
+```bash
+# Record failed PIN attempt (authenticated)
+POST /api/auth/record-failed-pin
+
+# Response:
+{
+  "success": true,
+  "attempts": 3,
+  "locked": false,
+  "lockedUntil": null
+}
+```
+
+```bash
+# Reset PIN attempts (after successful unlock)
+POST /api/auth/reset-pin-attempts
+```
+
+See backend/routes/auth/auth-routes.ts:72 and backend/routes/auth/oauth-routes.ts for full routing.
+
+## Best Practices
+
+<Steps>
+  <Step title="Use a Strong PIN">
+    Use 8 digits instead of 6 for better security (~100M vs ~1M combinations).
+  </Step>
+  
+  <Step title="Set Up BIP39 Recovery">
+    OAuth users have no password to reset. Your recovery phrase is your **only** backup.
+  </Step>
+  
+  <Step title="Don't Reuse Your PIN">
+    Use a unique PIN for Home Account. Don't reuse your phone unlock PIN or bank PIN.
+  </Step>
+  
+  <Step title="Change PIN Periodically">
+    Consider changing your PIN every 6-12 months as a security hygiene practice.
+  </Step>
+</Steps>
+
+## Related Topics
+
+- [Encryption](/security/encryption) - Understand the envelope encryption model
+- [Password Recovery](/security/password-recovery) - Set up BIP39 recovery for OAuth accounts
+- [OAuth API Reference](/api/auth/oauth) - OAuth configuration and setup

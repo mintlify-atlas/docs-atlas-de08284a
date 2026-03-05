@@ -1,0 +1,183 @@
+---
+title: 'List Categories'
+description: 'Retrieve all categories for a specific account'
+---
+
+## Endpoint
+
+```
+GET /api/categories
+```
+
+Retrieves all categories for a specific account, including their associated subcategories. Categories are returned in alphabetical order by name.
+
+## Authentication
+
+This endpoint requires authentication via Bearer token.
+
+## Query Parameters
+
+<ParamField query="account_id" type="string" required>
+  The UUID of the account to retrieve categories for. Must be a valid UUID format.
+</ParamField>
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Indicates whether the request was successful.
+</ResponseField>
+
+<ResponseField name="categories" type="array">
+  Array of category objects.
+  
+  <Expandable title="Category Object">
+    <ResponseField name="id" type="string">
+      The unique UUID of the category.
+    </ResponseField>
+    
+    <ResponseField name="account_id" type="string">
+      The UUID of the account this category belongs to.
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      The category name.
+    </ResponseField>
+    
+    <ResponseField name="name_encrypted" type="string | null">
+      The encrypted category name, if available.
+    </ResponseField>
+    
+    <ResponseField name="color" type="string">
+      The hex color code for the category.
+    </ResponseField>
+    
+    <ResponseField name="icon" type="string | null">
+      The icon identifier, or null if not set.
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp of when the category was created.
+    </ResponseField>
+    
+    <ResponseField name="updated_at" type="string | null">
+      ISO 8601 timestamp of when the category was last updated, or null.
+    </ResponseField>
+    
+    <ResponseField name="subcategories" type="array">
+      Array of subcategory objects associated with this category.
+      
+      <Expandable title="Subcategory Object">
+        <ResponseField name="id" type="string">
+          The unique UUID of the subcategory.
+        </ResponseField>
+        
+        <ResponseField name="category_id" type="string">
+          The UUID of the parent category.
+        </ResponseField>
+        
+        <ResponseField name="name" type="string">
+          The subcategory name.
+        </ResponseField>
+        
+        <ResponseField name="name_encrypted" type="string | null">
+          The encrypted subcategory name, if available.
+        </ResponseField>
+        
+        <ResponseField name="created_at" type="string">
+          ISO 8601 timestamp of when the subcategory was created.
+        </ResponseField>
+        
+        <ResponseField name="updated_at" type="string | null">
+          ISO 8601 timestamp of when the subcategory was last updated.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X GET "https://api.yourapp.com/api/categories?account_id=123e4567-e89b-12d3-a456-426614174000" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+## Example Response
+
+```json
+{
+  "success": true,
+  "categories": [
+    {
+      "id": "987fcdeb-51a2-43e7-9abc-123456789def",
+      "account_id": "123e4567-e89b-12d3-a456-426614174000",
+      "name": "Food & Dining",
+      "name_encrypted": null,
+      "color": "#10B981",
+      "icon": "utensils",
+      "created_at": "2026-03-01T10:00:00.000Z",
+      "updated_at": null,
+      "subcategories": [
+        {
+          "id": "abc12345-6789-0def-1234-567890abcdef",
+          "category_id": "987fcdeb-51a2-43e7-9abc-123456789def",
+          "name": "Groceries",
+          "name_encrypted": null,
+          "created_at": "2026-03-01T10:05:00.000Z",
+          "updated_at": null
+        },
+        {
+          "id": "def67890-abcd-ef12-3456-7890abcdef12",
+          "category_id": "987fcdeb-51a2-43e7-9abc-123456789def",
+          "name": "Restaurants",
+          "name_encrypted": null,
+          "created_at": "2026-03-01T10:06:00.000Z",
+          "updated_at": null
+        }
+      ]
+    },
+    {
+      "id": "456789ab-cdef-1234-5678-90abcdef1234",
+      "account_id": "123e4567-e89b-12d3-a456-426614174000",
+      "name": "Transportation",
+      "name_encrypted": null,
+      "color": "#3B82F6",
+      "icon": "car",
+      "created_at": "2026-03-02T14:00:00.000Z",
+      "updated_at": null,
+      "subcategories": []
+    }
+  ]
+}
+```
+
+## Error Responses
+
+<ResponseField name="400" type="error">
+  Bad Request - Missing or invalid account_id.
+  
+  ```json
+  {
+    "success": false,
+    "message": "account_id es requerido"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="403" type="error">
+  Forbidden - User does not have access to the specified account.
+  
+  ```json
+  {
+    "success": false,
+    "message": "You do not have access to this account"
+  }
+  ```
+</ResponseField>
+
+## Notes
+
+- Categories are returned in alphabetical order by name
+- Subcategories are also sorted alphabetically within each category
+- The user must have access to the specified account
+- Empty subcategories array means the category has no subcategories
