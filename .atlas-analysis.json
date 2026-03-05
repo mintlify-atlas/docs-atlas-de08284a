@@ -1,0 +1,144 @@
+{
+  "projectType": "saas",
+  "projectName": "Home Account",
+  "projectDescription": "Personal finance tracking app with end-to-end encryption, Excel imports, budgets, and AI-powered investment recommendations.",
+  "theme": "almond",
+  "primaryColor": "#040404",
+  "lightColor": "#21823c",
+  "darkColor": "#8cbf9c",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart", "installation"]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/transactions",
+              "features/budgets",
+              "features/categories",
+              "features/investments",
+              "features/account-sharing"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/encryption",
+              "security/password-recovery",
+              "security/oauth-pin"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/excel-import",
+              "guides/multi-account",
+              "guides/pwa-installation"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Authentication",
+            "pages": ["api/auth/login", "api/auth/register", "api/auth/oauth"]
+          },
+          {
+            "group": "Transactions",
+            "pages": [
+              "api/transactions/create",
+              "api/transactions/list",
+              "api/transactions/update",
+              "api/transactions/delete"
+            ]
+          },
+          {
+            "group": "Categories",
+            "pages": [
+              "api/categories/create",
+              "api/categories/list",
+              "api/categories/update",
+              "api/categories/delete"
+            ]
+          },
+          {
+            "group": "Budgets",
+            "pages": [
+              "api/budgets/create",
+              "api/budgets/list",
+              "api/budgets/update",
+              "api/budgets/delete"
+            ]
+          },
+          {
+            "group": "Investments",
+            "pages": [
+              "api/investments/risk-profile",
+              "api/investments/recommendations",
+              "api/investments/chat"
+            ]
+          },
+          {
+            "group": "AI",
+            "pages": ["api/ai/categorize", "api/ai/chat"]
+          },
+          {
+            "group": "Accounts",
+            "pages": [
+              "api/accounts/create",
+              "api/accounts/list",
+              "api/accounts/invitations"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "End-to-end encryption with AES-256-GCM",
+    "Excel import with AI-powered category suggestions",
+    "Budget tracking with visual progress indicators",
+    "AI investment recommendations and chat assistant",
+    "Account sharing with invitation system",
+    "OAuth login (Google, GitHub) with PIN encryption",
+    "PWA installable on mobile and desktop",
+    "BIP39 recovery phrase for password recovery"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/register",
+    "POST /api/auth/login",
+    "POST /api/auth/logout",
+    "GET /api/auth/google",
+    "GET /api/auth/github",
+    "GET /api/transactions",
+    "POST /api/transactions",
+    "PUT /api/transactions/:id",
+    "DELETE /api/transactions/:id",
+    "GET /api/categories",
+    "POST /api/categories",
+    "PUT /api/categories/:id",
+    "DELETE /api/categories/:id",
+    "GET /api/budget",
+    "POST /api/budget",
+    "PUT /api/budget/:id",
+    "DELETE /api/budget/:id",
+    "POST /api/import/excel",
+    "POST /api/ai/categorize",
+    "POST /api/ai/chat",
+    "GET /api/investment/risk-profile",
+    "POST /api/investment/risk-profile",
+    "GET /api/investment/recommendations",
+    "POST /api/investment/chat",
+    "GET /api/accounts",
+    "POST /api/accounts",
+    "POST /api/invitations",
+    "GET /api/invitations/:token"
+  ]
+}
